@@ -67,15 +67,14 @@ jobs:
           RAW="$RUNNER_TEMP/raw.log"
           : > "$RAW"
           EXIT=0
-          {
-            set -e
-            printf '%s' "$FAMILY_TREE_PAT" > "$RUNNER_TEMP/gh-token"
+          (
+            printf '%s' "$FAMILY_TREE_PAT" > "$RUNNER_TEMP/gh-token" || exit 21
             if [ "$MODE" = "selftest" ]; then
-              printf 'selftest-dummy-token' > "$RUNNER_TEMP/geni-token"
+              printf 'selftest-dummy-token' > "$RUNNER_TEMP/geni-token" || exit 22
             else
-              printf '%s' "$GENI_ACCESS_TOKEN" > "$RUNNER_TEMP/geni-token"
+              printf '%s' "$GENI_ACCESS_TOKEN" > "$RUNNER_TEMP/geni-token" || exit 22
             fi
-            chmod 600 "$RUNNER_TEMP/gh-token" "$RUNNER_TEMP/geni-token"
+            chmod 600 "$RUNNER_TEMP/gh-token" "$RUNNER_TEMP/geni-token" || exit 23
 
             DOCKER_ARGS=(--rm --tmpfs /work
               -v "$RUNNER_TEMP/gh-token:/run/gh-token:ro"
@@ -91,9 +90,9 @@ jobs:
               # GENI_UPLOAD_E2E=1), dummy token. Connection to 127.0.0.1:9 is
               # refused by construction, so this always exercises the ERROR
               # path; a run that exits 0 here is itself a failure signal.
-              mkdir -p "$RUNNER_TEMP/selftest"
-              printf 'ZZSENTINEL fake asset bytes\n' > "$RUNNER_TEMP/selftest/asset.jpg"
-              cat > "$RUNNER_TEMP/selftest/manifest.yaml" <<'SELFTESTEOF'
+              mkdir -p "$RUNNER_TEMP/selftest" || exit 24
+              printf 'ZZSENTINEL fake asset bytes\n' > "$RUNNER_TEMP/selftest/asset.jpg" || exit 25
+              cat > "$RUNNER_TEMP/selftest/manifest.yaml" <<'SELFTESTEOF' || exit 26
           targets:
             - profile_id: "0000000000000000001"
               expect_name: "ZZSENTINEL PERSONA"
@@ -113,7 +112,7 @@ jobs:
               fi
             fi
             docker run "${DOCKER_ARGS[@]}" "$IMAGE" "${ARGS[@]}"
-          } >> "$RAW" 2>&1 || EXIT=$?
+          ) >> "$RAW" 2>&1 || EXIT=$?
           echo "container exit code: $EXIT"
           echo "raw output bytes captured: $(wc -c < "$RAW")"
           if [ "$MODE" = "selftest" ] && [ "$EXIT" -eq 0 ]; then
@@ -132,30 +131,33 @@ jobs:
           set +x
           umask 077
           RAW="$RUNNER_TEMP/raw.log"
+          CT="$RUNNER_TEMP/upload-log.age"
           EXIT=0
-          {
-            set -e
-            # Fail closed: if encryption fails, the workflow aborts and the
-            # raw log never leaves the ephemeral runner.
-            age -r "$RECIPIENT" -o "$RUNNER_TEMP/upload-log.age" "$RAW"
+          (
+            # Fail closed: every fallible command exits the subshell
+            # explicitly; no reliance on set -e, which || lists suppress.
+            age -r "$RECIPIENT" -o "$CT" "$RAW" || exit 31
+            # Require nonempty ciphertext before anything is committed.
+            [ -s "$CT" ] || exit 32
 
-            printf 'https://x-access-token:%s@github.com\n' "$FAMILY_TREE_PAT" > "$RUNNER_TEMP/git-cred"
-            chmod 600 "$RUNNER_TEMP/git-cred"
-            mkdir logrepo && cd logrepo
-            git init -q .
-            git config credential.helper "store --file=$RUNNER_TEMP/git-cred"
+            printf 'https://x-access-token:%s@github.com\n' "$FAMILY_TREE_PAT" > "$RUNNER_TEMP/git-cred" || exit 33
+            chmod 600 "$RUNNER_TEMP/git-cred" || exit 34
+            mkdir logrepo || exit 35
+            cd logrepo || exit 36
+            git init -q . || exit 37
+            git config credential.helper "store --file=$RUNNER_TEMP/git-cred" || exit 38
             git remote add origin "$PRIVATE_REPO_URL"
-            git fetch -q --depth 1 origin "$PRIVATE_REF"
-            git checkout -q FETCH_HEAD
-            mkdir -p logs
-            cp "$RUNNER_TEMP/upload-log.age" "logs/upload-log-run${GITHUB_RUN_NUMBER}-attempt${GITHUB_RUN_ATTEMPT}.age"
-            git add logs/
+            git fetch -q --depth 1 origin "$PRIVATE_REF" || exit 40
+            git checkout -q FETCH_HEAD || exit 41
+            mkdir -p logs || exit 42
+            cp "$CT" "logs/upload-log-run${GITHUB_RUN_NUMBER}-attempt${GITHUB_RUN_ATTEMPT}.age" || exit 43
+            git add logs/ || exit 44
             git -c user.name="geni-uploader-action" -c user.email="geni-uploader-action@users.noreply.github.com" \
-              commit -qm "geni upload log (age-encrypted), run ${GITHUB_RUN_NUMBER} attempt ${GITHUB_RUN_ATTEMPT}"
+              commit -qm "geni upload log (age-encrypted), run ${GITHUB_RUN_NUMBER} attempt ${GITHUB_RUN_ATTEMPT}" || exit 45
             # STOP on non-fast-forward: no force-push, no rebase - fail and
             # let a human/agent reconcile the private branch state.
-            git push origin "HEAD:refs/heads/$PRIVATE_REF"
-          } >> "$RAW" 2>&1 || EXIT=$?
+            git push origin "HEAD:refs/heads/$PRIVATE_REF" || exit 46
+          ) >> "$RAW" 2>&1 || EXIT=$?
           if [ "$EXIT" -ne 0 ]; then
             echo "log encryption/commit step FAILED closed (exit $EXIT); no raw output published"
             exit 1
