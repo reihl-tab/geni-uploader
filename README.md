@@ -76,7 +76,7 @@ podman run --rm --tmpfs /work \
   -e GENI_UPLOAD_EXPECT_SHA=<full-40-char-sha> \
   -v ~/.gh-token:/run/gh-token:ro,Z \
   -v ~/.geni-token:/run/geni-token:ro,Z \
-  quay.io/reihlinstinct/geni-uploader@sha256:<pinned-digest> \
+  ghcr.io/reihlinstinct/geni-uploader@sha256:<pinned-digest> \
   --token-file /run/geni-token plan \
   --manifest packages/my-batch/upload-manifest.yaml
 ```
@@ -94,7 +94,7 @@ podman run --rm --tmpfs /work \
   -e GENI_UPLOAD_EXPECT_SHA=<full-40-char-sha> \
   -v ~/.gh-token:/run/gh-token:ro,Z \
   -v ~/.geni-token:/run/geni-token:ro,Z \
-  quay.io/reihlinstinct/geni-uploader@sha256:<pinned-digest> \
+  ghcr.io/reihlinstinct/geni-uploader@sha256:<pinned-digest> \
   --token-file /run/geni-token run \
   --manifest packages/my-batch/upload-manifest.yaml \
   --confirm YES
@@ -184,7 +184,7 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-**Building the image:** See `publish-image.yml` for the publish workflow. The image is published to `quay.io/reihlinstinct/geni-uploader`.
+**Building the image:** See `publish-image.yml` for the publish workflow. The image is published to `ghcr.io/reihlinstinct/geni-uploader`.
 
 ## Related documentation
 
