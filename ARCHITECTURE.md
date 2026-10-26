@@ -50,7 +50,7 @@ flowchart TD
 
 ### 1. Container Image (Immutable)
 
-The published image (`quay.io/reihlinstinct/geni-uploader`) contains:
+The published image (`ghcr.io/reihlinstinct/geni-uploader`) contains:
 - **Pinned Python environment**: Python 3.11+ with minimal dependencies (`PyYAML==6.0.3`)
 - **Reviewed uploader code**: `geni_upload.py` and `source_details.py`
 - **Entrypoint script**: `entrypoint.sh` that clones the data repo, runs the uploader, and commits results
@@ -151,7 +151,7 @@ python -m pytest -q
 
 **CI:** GitHub Actions workflow `.github/workflows/ci.yml` runs tests on push.
 
-**Image publishing:** See `.github/workflows/publish-image.yml`. The image is published to `quay.io/reihlinstinct/geni-uploader`.
+**Image publishing:** See `.github/workflows/publish-image.yml`. The image is published to `ghcr.io/reihlinstinct/geni-uploader`.
 
 ## Related Documentation
 
