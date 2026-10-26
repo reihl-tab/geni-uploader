@@ -10,3 +10,5 @@ image build and usage:
 [Privacy Policy](privacy.md)
 
 [New-profile creation design](profile-creation-design.md)
+
+[API client coverage and offline MCP design](API-CLIENT-DESIGN.md)
