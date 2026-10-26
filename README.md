@@ -213,3 +213,15 @@ python -m pytest -q
 - [docs/index.md](docs/index.md) — Documentation index
 - [PRIVACY.md](PRIVACY.md) — Privacy summary
 - [SECURITY.md](SECURITY.md) — Security policy and reporting
+
+### Bounded source-details diagnostics
+
+Source-details emits fixed stage names and item/target ordinals, not object IDs.
+Stages distinguish schema/token setup, object identity, metadata preconditions,
+target identity/deceased checks and completed plan items. Anchor and description
+checks emit booleans only. A description passes when its old hash matches OR its
+text already equals the requested text; identity and anchor guards remain required.
+A stopped run reports a fixed error category without exception text or payloads.
+The last started stage identifies the check that did not complete. Partial item
+passes do not mean the whole plan passed. Only `plan_checked result=pass` confirms
+all checks completed. No extra service calls or write permissions are added.
