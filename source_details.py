@@ -115,6 +115,8 @@ def expectation_checks(obj, item):
             checks["description_desired"] = isinstance(text, str) and text == desired
         elif key in {"title", "source_url"}:
             checks[key] = obj.get(key) == value
+        else:
+            raise api.ApiError("unsupported expectation")
     return checks
 
 
@@ -429,11 +431,13 @@ def main():
         if args.mode == "snapshot":
             diagnostic("snapshot")
             snapshot(items, token, args.output)
+            diagnostic("snapshot", "pass")
         else:
             plan = checked_plan(items, token)
             if args.mode == "repair":
                 diagnostic("repair")
                 apply_plan(plan, token, args.state, args.sync_state)
+                diagnostic("repair", "pass")
             else:
                 print("source identity and target checks passed; no writes")
         return 0

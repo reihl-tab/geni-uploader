@@ -224,4 +224,5 @@ text already equals the requested text; identity and anchor guards remain requir
 A stopped run reports a fixed error category without exception text or payloads.
 The last started stage identifies the check that did not complete. Partial item
 passes do not mean the whole plan passed. Only `plan_checked result=pass` confirms
-all checks completed. No extra service calls or write permissions are added.
+all pre-mutation checks completed, not that a repair succeeded. Repair and snapshot
+emit their own pass marker after completion. No extra service calls or write permissions are added.
