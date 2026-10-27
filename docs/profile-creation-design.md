@@ -198,8 +198,11 @@ or alternative implementation is authorized by this design:
 
 - An active branch ruleset targets all branches except the exact provisioned state
   ref, written as the complete literal `refs/heads/<state-name>` with no wildcard
-  in the exclusion. It enables Restrict creations, Restrict updates and Restrict
-  deletions. The operator principal has no bypass through user, team, role, app or inherited rules.
+  in the exclusion. Here `<state-name>` is a placeholder: replace it with the
+    provisioned branch's literal name, not angle brackets or a pattern. It
+  enables Restrict creations, Restrict updates and Restrict
+    deletions. The operator principal has no bypass through user, team, role,
+  app or inherited rules.
   This covers the default branch, other protected branches and new alternate refs.
 - A separate active ruleset targets the exact state ref. It enables Restrict
   deletions and Block force pushes, with no bypass for the operator principal.
@@ -214,11 +217,13 @@ or alternative implementation is authorized by this design:
   Inspect effective rules for both the exact state ref and the default ref, plus
   the complete active ruleset definitions, include/exclude conditions, inherited
   rules and bypass lists. Record ruleset IDs, update timestamps/history entries
-  and principal/role evidence in the private receipt. Use each ruleset's `updated_at` or its history
+    and principal/role evidence in the private receipt. Use each ruleset's
+  `updated_at` or its history
   entry, not an assumed version field. `current_user_can_bypass` describes the
   identity making that audit request only; it does not prove the run principal's
   non-bypass status. Check that principal and all its effective memberships
-  separately. Recheck that evidence before POST; changes stop the run. Do not infer an empty bypass list from a response that omits it.
+    separately. Recheck that evidence before POST; changes stop the run. Do not
+  infer an empty bypass list from a response that omits it.
 - The contents-only run credential may not expose complete ruleset/bypass metadata.
   Use a separate read-only audit identity with the access required to inspect it,
   never grant administration permission to the run credential. If the account plan
