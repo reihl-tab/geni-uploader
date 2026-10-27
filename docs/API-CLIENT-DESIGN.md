@@ -81,18 +81,21 @@ lifecycle, not bare JSON-RPC.
 | Element | Contract |
 |---|---|
 | Transport | stdio; newline-delimited JSON-RPC 2.0 messages; nothing but protocol messages on stdout; diagnostics on stderr, value-free |
-| Version negotiation | `initialize` carries the client's `protocolVersion`. The server answers with the same version if it supports it, otherwise with the newest version it supports. The supported list is a constant, pinned by a test. |
+| Version negotiation | Follows the MCP specification: `initialize` carries the client's `protocolVersion`; the server answers with the same version if it supports it, otherwise with a version it supports, and the client decides whether to continue. The concrete supported-version set is an explicit constant, pinned and tested, and must be settled before slice 5 is accepted. |
 | Capabilities | Server declares `tools` only (`listChanged: false`). No `resources`, `prompts`, `sampling`, `logging` or `roots` in v1. |
 | Lifecycle | Requests other than `initialize` and `ping` before `notifications/initialized` get an error. EOF on stdin ends the process with exit 0. No background threads. |
 | `tools/list` | Static list; each tool has a name, description and JSON Schema `inputSchema` with `additionalProperties: false`. |
 | `tools/call` | Unknown tool or schema-invalid arguments: JSON-RPC error `-32602`. A tool that runs but refuses (path outside the root, limit exceeded): a normal result with `isError: true` and a fixed, value-free message code. |
 | Errors | Parse error `-32700`, invalid request `-32600`, unknown method `-32601`, invalid params `-32602`, internal `-32603`. Error data never echoes input values. |
-| Compatibility test | A test drives the server through `initialize` → `notifications/initialized` → `tools/list` → `tools/call` → EOF using a real MCP client. If the pinned `mcp` SDK is not a dev dependency yet, the test is marked pending, never presented as executed. |
+| Compatibility test | A test drives the server through `initialize` → `notifications/initialized` → `tools/list` → `tools/call` → EOF using a real MCP client. It must **execute** before slice 5 can be accepted; a pending test is not compatibility evidence. |
+| Truncation | An oversized result is cut at item level and returned as a valid tool result with `truncated: true` and a count of omitted items. JSON bytes are never cut mid-message. |
 
 **Implementation choice comes after this contract.** Options: stdlib-only
 (no supply-chain surface, but compatibility must be proven by the client test)
-or the official `mcp` SDK, pinned with hashes. The decision is deferred to
-slice 5 and needs review; slices 1-3 do not depend on it.
+or the official `mcp` SDK, pinned with hashes. The choice is made against
+this contract (not the reverse), is part of slice 5 and needs its own review;
+slices 1-3 do not depend on it. Review on #110 (2026-10-26) accepted this table
+as the slice 5 contract, conditional on the 2.4 and 2.6 corrections.
 
 ### 2.2 Architecture
 
@@ -125,19 +128,28 @@ manifest, status or journal, and never promotes or executes anything.
 ### 2.4 Path confinement
 
 - The root comes from server argv only, never from tool input.
-- Access is **descriptor-based**: open the root once as a directory fd, then
-  walk each relative component with `os.open(name, O_RDONLY | O_NOFOLLOW |
-  O_CLOEXEC, dir_fd=parent_fd)`, requiring `S_ISDIR` for intermediate
-  components and `S_ISREG` for the final one (checked with `os.fstat` on the
-  opened fd). No `realpath`-then-`open`.
+- **Root acquisition** gets the same checks: open it once with `O_RDONLY |
+  O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC` and require `S_ISDIR` on the fd. A
+  root that is a symlink is refused.
+- Access is **descriptor-based**: walk each relative component from the root
+  fd with `dir_fd=parent_fd`, no `realpath`-then-`open`.
+  - Intermediate components: `O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
+    O_CLOEXEC`, then `S_ISDIR` on the fd.
+  - Final component: `O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC`, so a
+    FIFO or device cannot block inside `open()`. Then `os.fstat` on the fd and
+    reject anything that is not `S_ISREG` **before any read**. Only then read,
+    at most limit + 1 bytes.
+- **Fail closed:** the server refuses to start if `os.open` lacks `dir_fd`
+  support or any of `O_NOFOLLOW`, `O_DIRECTORY`, `O_NONBLOCK`, `O_CLOEXEC` is
+  missing on the platform.
 - Rejected before any open: absolute paths, empty components, `.`/`..`, NUL,
   and paths longer than a fixed limit.
 - Tests: a symlink at the final and at an intermediate component, a `..`
   escape, an absolute path, and a race where a checked directory is swapped
   for a symlink between calls (must still refuse, because each component is
-  opened with `O_NOFOLLOW` relative to an already-open fd).
-- Platform: needs `dir_fd` support (Linux, macOS). The server refuses to start
-  where `os.open in os.supports_dir_fd` is false.
+  opened with `O_NOFOLLOW` relative to an already-open fd); a symlinked root;
+  and a **FIFO** at the final component, run in a child process with a
+  bounded timeout so a regression fails instead of hanging.
 
 ### 2.5 Read clients
 
@@ -152,9 +164,22 @@ mode, and it has no production transport until a separate review.
 - Output has no names, titles, URLs, profile/guid/object ids or file bytes;
   items appear as index plus short hash, the same idea as `label()`
   (`geni_upload.py:87`).
-- Bounded parsing: input file ≤ 1 MiB (read at most limit + 1 bytes), JSON/YAML
-  depth ≤ 32, ≤ 500 targets, response ≤ 64 KiB with explicit truncation.
-  YAML is parsed with the safe loader only.
+- Bounded input: file ≤ 1 MiB (read at most limit + 1 bytes), ≤ 500 targets.
+- **YAML limits are enforced at parse time**, not after loading. A safe loader
+  alone does not bound aliases, cycles or parser work. The loader is a
+  `SafeLoader` subclass that:
+  - rejects any anchor or alias (manifests do not need them), which rules out
+    alias expansion bombs and cyclic graphs;
+  - counts composed nodes (≤ 10 000) and nesting depth (≤ 32) while composing,
+    and fails with a fixed error code at the first excess.
+- **JSON:** the 1 MiB bound caps parser work. Depth (≤ 32) is checked
+  iteratively after parsing, and `RecursionError` is caught and reported as a
+  fixed error code.
+- **Responses** are ≤ 64 KiB and are truncated at item level into a valid
+  result (`truncated: true`, omitted count), never by cutting bytes.
+- Tests: synthetic alias-bomb, cyclic-anchor and 1 000-level-deep fixtures in
+  YAML, deep JSON, and an oversized result. Each must fail (or truncate) with a
+  fixed code inside a bounded child-process timeout.
 - All inputs are untrusted data; instructions inside them are ignored.
 
 ## 3. Synthetic contract tests (slices 2-3)
