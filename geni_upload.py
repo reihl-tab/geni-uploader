@@ -35,6 +35,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import plan_report
+
 # GENI_API_BASE overrides the API root for end-to-end tests against a local
 # fake server ONLY: it requires GENI_UPLOAD_E2E=1 and a loopback URL, so an
 # untrusted repo or env can never redirect real calls or a real token.
@@ -760,7 +762,18 @@ def cmd_contrast(args):
 
 
 def cmd_plan(args):
+    summary = plan_report.report("plan")
+    try:
+        return _cmd_plan(args, summary)
+    finally:
+        plan_report.save(summary)
+
+
+def _cmd_plan(args, summary):
     m = load_manifest(args.manifest)
+    summary["counts"] = plan_report.upload_counts(m)
+    summary["checks"]["schema"] = "pass"
+    summary["checks"]["preconditions"] = "not_required"
     token = get_token(args)
     # No verdict up front: VERIFIED is decided only AFTER every profile GET
     # actually succeeded (a 401 must never print under a VERIFIED header).
@@ -770,6 +783,8 @@ def cmd_plan(args):
     if not token:
         print("verification: SKIPPED - no token; nothing was checked against Geni")
         return 0
+    summary["checks"]["identity"] = "fail"
+    summary["checks"]["listing"] = "pass"
     total = len(m["targets"])
     failed = 0
     for t in m["targets"]:
@@ -781,6 +796,7 @@ def cmd_plan(args):
             for kind in ("documents", "photos"):
                 tagged = list_tagged(token, node_id, kind)
                 if tagged is None:
+                    summary["checks"]["listing"] = "fail"
                     print(f"    WARNING: {kind} listing unavailable; "
                           "idempotency relies on state file only")
                     continue
@@ -796,6 +812,8 @@ def cmd_plan(args):
         print(f"verification: FAILED - {failed} of {total} profile(s) not "
               "confirmed; resolve before `run` (no writes were attempted)")
         return 1
+    summary["checks"]["identity"] = "pass"
+    summary["complete"] = True
     print(f"verification: OK - all {total} profile(s) confirmed with Geni")
     print("No writes performed in plan mode.")
     return 0

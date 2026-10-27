@@ -43,6 +43,7 @@ jobs:
     env:
       IMAGE: ghcr.io/reihlinstinct/geni-uploader@sha256:d1b1cbbe3d6bb7f130a69a4f949aaf7bb66abf358217987b1bbc2d23c14c317c
       SOURCE_DETAILS_IMAGE_READY: "yes"
+      PLAN_SUMMARY_IMAGE_READY: "no"
       AGE_VERSION: v1.3.2
       AGE_SHA256: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
     steps:
@@ -70,6 +71,7 @@ jobs:
           RAW="$RUNNER_TEMP/raw.log"
           : > "$RAW"
           EXIT=0
+          mkdir -p "$RUNNER_TEMP/plan-report"
           (
             printf '%s' "$FAMILY_TREE_PAT" > "$RUNNER_TEMP/gh-token" || exit 21
             if [ "$MODE" = "selftest" ]; then
@@ -86,6 +88,10 @@ jobs:
               -e GENI_UPLOAD_REPO="$PRIVATE_REPO_URL"
               -e GENI_UPLOAD_REF="$PRIVATE_REF"
               -e GENI_UPLOAD_EXPECT_SHA="$PRIVATE_EXPECT_SHA")
+            if [ "$MODE" = "plan" ] || [ "$MODE" = "details-plan" ]; then
+              DOCKER_ARGS+=(-v "$RUNNER_TEMP/plan-report:/run/plan-report"
+                -e GENI_PLAN_REPORT=/run/plan-report/report.json)
+            fi
 
             if [ "$MODE" = "selftest" ]; then
               # Inert: synthetic sentinel manifest + fake asset, loopback-only
@@ -137,6 +143,21 @@ jobs:
           if [ "$MODE" = "selftest" ] && [ "$EXIT" -eq 0 ]; then
             echo "selftest FAILED closed-loop check: dead-loopback run exited 0"
             exit 1
+          fi
+          if { [ "$MODE" = "plan" ] || [ "$MODE" = "details-plan" ]; } &&
+             [ "${PLAN_SUMMARY_IMAGE_READY:-no}" = "yes" ]; then
+            # Render only a bounded fixed-schema report with the SAME pinned code.
+            # Never copy raw logs, manifest values or exception strings here.
+            docker run --rm --network none --entrypoint python \
+              -v "$RUNNER_TEMP/plan-report:/run/plan-report:ro" \
+              -v "$GITHUB_STEP_SUMMARY:/run/job-summary" \
+              -e GITHUB_STEP_SUMMARY=/run/job-summary \
+              "$IMAGE" /opt/plan_report.py /run/plan-report/report.json || exit 1
+          fi
+          if { [ "$MODE" = "plan" ] || [ "$MODE" = "details-plan" ]; } &&
+             [ "${PLAN_SUMMARY_IMAGE_READY:-no}" != "yes" ]; then
+            printf '%s\n' '## Read-only plan summary' '' 'Safe to run: no' \
+              'Summary image not released; inspect the protected log.' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "container step done"
 
