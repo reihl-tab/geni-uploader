@@ -226,3 +226,8 @@ The last started stage identifies the check that did not complete. Partial item
 passes do not mean the whole plan passed. Only `plan_checked result=pass` confirms
 all pre-mutation checks completed, not that a repair succeeded. Repair and snapshot
 emit their own pass marker after completion. No extra service calls or write permissions are added.
+
+
+Read-only metadata plans require a token and exit nonzero before identity checks
+when no token is available. This is intentional: an unverified plan cannot be
+complete or ready. Optional summary persistence never replaces the plan outcome.

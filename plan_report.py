@@ -75,7 +75,15 @@ def render(data):
 def save(data):
     path = os.environ.get('GENI_PLAN_REPORT')
     if path:
-        Path(path).write_text(json.dumps(validate(data)), encoding='utf-8')
+        try:
+            Path(path).write_text(json.dumps(validate(data)), encoding='utf-8')
+        except (OSError, ValueError, TypeError, KeyError):
+            # Optional reporting cannot replace the underlying plan outcome.
+            # No exception text or partially valid readiness report escapes.
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def main():

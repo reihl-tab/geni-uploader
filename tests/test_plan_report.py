@@ -166,3 +166,55 @@ def test_malformed_json_has_fixed_fallback(tmp_path):
         r.main()
     assert 'ZZPrivate' not in dst.read_text()
     assert 'Safe to run: no' in dst.read_text()
+
+
+@pytest.mark.parametrize('failure', ['path', 'validation'])
+@pytest.mark.parametrize('outcome', ['return', 'raise'])
+def test_optional_summary_failure_preserves_upload_outcome(tmp_path, failure, outcome, monkeypatch, capsys):
+    destination = tmp_path / 'ZZPrivateMissing' / 'report' if failure == 'path' else tmp_path / 'report'
+    monkeypatch.setenv('GENI_PLAN_REPORT', str(destination))
+    original = g.ApiError('ZZPrivateOriginal')
+    def plan(args, summary):
+        if failure == 'validation':
+            summary['counts']['sources'] = 100001
+        if outcome == 'raise':
+            raise original
+        return 7
+    monkeypatch.setattr(g, '_cmd_plan', plan)
+    if outcome == 'raise':
+        with pytest.raises(g.ApiError) as caught:
+            g.cmd_plan(None)
+        assert caught.value is original
+    else:
+        assert g.cmd_plan(None) == 7
+    assert not destination.exists()
+    assert capsys.readouterr().out == ''
+
+
+@pytest.mark.parametrize('failure', ['path', 'validation'])
+@pytest.mark.parametrize('no_token', [True, False])
+def test_summary_failure_preserves_details_result(tmp_path, failure, no_token, monkeypatch, capsys):
+    destination = tmp_path / 'ZZPrivateMissing' / 'report' if failure == 'path' else tmp_path / 'report'
+    monkeypatch.setenv('GENI_PLAN_REPORT', str(destination))
+    monkeypatch.setattr(sys, 'argv', ['source_details', 'plan', '--manifest', 'ZZPrivatePath'])
+    monkeypatch.setattr(s, 'load_records', lambda *args: [copy.deepcopy(ITEM)])
+    monkeypatch.setattr(s.api, 'get_token', lambda *args: None if no_token else 'ZZtoken')
+    monkeypatch.setattr(s, 'checked_plan', lambda *args: [])
+    if failure == 'validation':
+        monkeypatch.setattr(r, 'details_counts', lambda *args: dict.fromkeys(r.COUNTS, 100001))
+    assert s.main() == (1 if no_token else 0)
+    assert not destination.exists()
+    assert 'ZZPrivate' not in capsys.readouterr().out
+
+
+def test_details_plan_without_token_stops_before_any_checks(tmp_path, monkeypatch):
+    monkeypatch.setenv('GENI_PLAN_REPORT', str(tmp_path / 'report'))
+    monkeypatch.setattr(sys, 'argv', ['source_details', 'plan', '--manifest', 'ZZpath'])
+    monkeypatch.setattr(s, 'load_records', lambda *args: [copy.deepcopy(ITEM)])
+    monkeypatch.setattr(s.api, 'get_token', lambda *args: None)
+    def forbidden(*args):
+        raise AssertionError('no token must stop before checks or network')
+    monkeypatch.setattr(s, 'checked_plan', forbidden)
+    monkeypatch.setattr(s.api, 'execute', forbidden)
+    assert s.main() == 1
+    assert 'Safe to run: no' in r.render(json.loads((tmp_path / 'report').read_text()))
