@@ -188,22 +188,37 @@ or protection-bypass authority. The data repository uses a distinct read-only
 credential. Neither credential is put in a receipt, journal or git history, and
 agents do not use these credentials for live runs. A repository-scoped token does
 not itself impose branch-only write permission. The following server-side
-rulesets are mandatory, not a suggested code-only check:
+rulesets are mandatory, not a suggested code-only check. Private-repository branch
+and tag rulesets require GitHub Pro, Team or Enterprise Cloud. A GitHub Free
+personal account cannot meet this design: production stays blocked until an
+authorized plan change or a separately designed and reviewed alternative provides
+equivalent server-enforced guarantees. Making the state repository public is not
+an alternative because the journal contains private family data. No plan upgrade
+or alternative implementation is authorized by this design:
 
 - An active branch ruleset targets all branches except the exact provisioned state
-  ref. It enables Restrict creations, Restrict updates and Restrict deletions. The
+  ref, written as the complete literal `refs/heads/<state-name>` with no wildcard
+  in the exclusion. It enables Restrict creations, Restrict updates and Restrict deletions. The
   operator principal has no bypass through user, team, role, app or inherited rules.
   This covers the default branch, other protected branches and new alternate refs.
 - A separate active ruleset targets the exact state ref. It enables Restrict
   deletions and Block force pushes, with no bypass for the operator principal.
   Normal fast-forward state pushes remain allowed. Neither run nor recovery may
   weaken these rules or delete/recreate the state ref.
+- Tags are not used for state or recovery. An active tag ruleset targets all tags
+  and enables Restrict creations, Restrict updates and Restrict deletions, with no
+  bypass for the operator principal. This prevents the contents-write credential
+  from creating an alternate mutable journal ref outside the branch rules.
 - Before planning and immediately before each new intent, verify the authenticated
   credential's principal, selected private repository and effective write scope.
   Inspect effective rules for both the exact state ref and the default ref, plus
   the complete active ruleset definitions, include/exclude conditions, inherited
-  rules and bypass lists. Record ruleset IDs, updated versions and principal/role
-  evidence in the private receipt. Recheck that evidence before POST; changes stop
+  rules and bypass lists. Record ruleset IDs, update timestamps/history entries and principal/role
+  evidence in the private receipt. Use each ruleset's `updated_at` or its history
+  entry, not an assumed version field. `current_user_can_bypass` describes the
+  identity making that audit request only; it does not prove the run principal's
+  non-bypass status. Check that principal and all its effective memberships
+  separately. Recheck that evidence before POST; changes stop
   the run. Do not infer an empty bypass list from a response that omits it.
 - The contents-only run credential may not expose complete ruleset/bypass metadata.
   Use a separate read-only audit identity with the access required to inspect it,
@@ -216,7 +231,7 @@ rulesets are mandatory, not a suggested code-only check:
 GitHub rule meanings and availability must be checked against current documentation:
 https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets
 and
-https://docs.github.com/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets
+https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets
 
 Never claim a branch-scoped PAT. No token in git, logs, plan receipts or artifacts.
 The human operator completes OAuth and runs it. Geni's restrictions still apply; an
