@@ -99,9 +99,8 @@ public logs. Public output is fixed counts/statuses only, not even local IDs.
   for any POST. The
   receipt binds the initial plan-time state head. Run must start at that
   head; thereafter each verified intent/ack/result commit is a recorded expected
-  descendant within this run. Unknown remote changes still stop. A later parent
-  created by this same
-  run is tracked as a verified expected graph delta, not an unexplained change.
+  descendant within this run. Unknown remote changes still stop. A parent verified earlier in the same run
+  is tracked as a verified expected graph delta, not an unexplained change.
 - Readback verifies every sent field, public:false, is_alive, gender and actual
   parent relationship. A missing field is unverifiable, not a default success.
   After an expiry stop with an unacknowledged intent, do not reuse an expired
