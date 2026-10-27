@@ -33,6 +33,7 @@ def test_callback_reads_only_access_token_with_pinned_script():
     import re
     page = (ROOT / 'docs/oauth-callback.html').read_text()
     assert 'layout: null' in page
+    assert '{{' not in page and '{%' not in page
     assert "history.replaceState(null, '', location.pathname)" in page
     assert 'name="referrer" content="no-referrer"' in page
     assert "default-src 'none'" in page
@@ -73,7 +74,7 @@ const assert = require('node:assert/strict');
       [id, {value:'', hidden:true, textContent:'', handlers:{},
         addEventListener(k, fn) {this.handlers[k]=fn;}, focus(){}, select(){}}]));
     const events = [];
-    const ctx = {URLSearchParams,
+    const ctx = {URLSearchParams, window:{addEventListener(){}},
       location:{search:'', hash:found?'#access_token=ZZtoken%26value&expires_in=99':'#error=denied', pathname:'/callback.html'},
       history:{replaceState(a,b,c){events.push(c);}},
       navigator:{clipboard:{async writeText(value){events.push(value);}}},
@@ -134,7 +135,7 @@ for (const [search, hash, expected] of cases) {
   const elements = Object.fromEntries(['token','copy','clear','status'].map(id =>
     [id, {value:'', hidden:true, textContent:'', addEventListener(){}}]));
   const location = {search, hash, pathname:'/callback.html'};
-  const ctx = {URLSearchParams, location,
+  const ctx = {URLSearchParams, window:{addEventListener(){}}, location,
     history:{replaceState(a,b,c){assert.equal(c,'/callback.html');location.search='';location.hash='';}},
     document:{getElementById(id){return elements[id];},
       addEventListener(k,fn){fn();}}};
@@ -166,6 +167,7 @@ const vm=require('node:vm'),assert=require('node:assert/strict');
 for(const [search,hash,ok,failClear] of [
  ['?access_token=ZZtoken%26value','',true,false],
  ['','#access_token=ZZtoken%26value',true,false],
+ ['?access_token=ZZ+token','',false,false],
  ['?access_token=ZZone&access_token=ZZtwo','',false,false],
  ['?access_token=ZZone&%61ccess_token=ZZone','',false,false],
  ['?access_token=ZZone','#access_token=ZZone',false,false],
@@ -173,13 +175,24 @@ for(const [search,hash,ok,failClear] of [
  ['?access_token=ZZtoken','',false,true]
 ]){
  const elements=Object.fromEntries(['token','copy','clear','status'].map(id=>[id,{value:'',hidden:true,textContent:'',handlers:{},addEventListener(k,fn){this.handlers[k]=fn;},focus(){},select(){}}]));
- const events=[];const location={search,hash,pathname:'/callback.html'};
- vm.runInNewContext(SCRIPT,{URLSearchParams,location,history:{replaceState(){events.push('clear');if(failClear)throw Error('ZZsecret');location.search='';location.hash='';}},navigator:{clipboard:{async writeText(v){events.push(v);}}},document:{getElementById(id){return elements[id];},addEventListener(k,fn){fn();}}});
+ const events=[];let restored;const location={search,hash,pathname:'/callback.html'};
+ vm.runInNewContext(SCRIPT,{URLSearchParams,window:{addEventListener(k,fn){assert.equal(k,'pageshow');restored=fn;}},location,history:{replaceState(){events.push('clear');if(failClear)throw Error('ZZsecret');location.search='';location.hash='';}},navigator:{clipboard:{async writeText(v){events.push(v);}}},document:{getElementById(id){return elements[id];},addEventListener(k,fn){fn();}}});
  assert.equal(events[0],'clear');assert.equal(!elements.copy.hidden,ok);
  assert(!elements.status.textContent.includes('ZZsecret'));
- if(ok){assert.equal(elements.token.value,'ZZtoken&value');await elements.copy.handlers.click();assert.equal(events[1],'ZZtoken&value');elements.clear.handlers.click();assert.equal(elements.token.value,'');assert.equal(elements.copy.hidden,true);}
+ if(ok){assert.equal(elements.token.value,'ZZtoken&value');await elements.copy.handlers.click();assert.equal(events[1],'ZZtoken&value');restored({persisted:true});assert.equal(elements.token.value,'');assert.equal(elements.copy.hidden,true);await elements.clear.handlers.click();assert.equal(events.at(-1),'');}
  else {assert.equal(elements.token.value,'');assert.equal(events.length,1);}
 }
 })();
 """.replace('SCRIPT', json.dumps(script))
     subprocess.run([node, '-e', harness], check=True, capture_output=True, text=True)
+
+
+def test_query_form_encoding_preserves_encoded_plus():
+    import shutil
+    import subprocess
+
+    import pytest
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node unavailable')
+    subprocess.run([node, '-e', "const a=require('node:assert/strict');a.equal(new URLSearchParams('?access_token=ZZ%2Btoken').get('access_token'),'ZZ+token');a.equal(new URLSearchParams('?access_token=ZZ+token').get('access_token'),'ZZ token');"], check=True)
