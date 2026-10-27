@@ -13,6 +13,14 @@ workflow metadata (actor, commit, timing) is also retained. A successful respons
 shape is not proof of the tree owner's identity or write permissions. A response
 that differs from the limited known shape stops as inconclusive, not invalid.
 
+The user endpoint documents `name` and `account_type`, not profile `id`/`guid`:
+https://www.geni.com/platform/developer/help/api?path=user&version=1 . The probe
+requires a nonblank string name plus account_type basic, plus or pro. These
+values stay in memory and are never logged or compared with any person's name.
+Unknown/new account types fail closed as inconclusive. This checks the documented
+response shape only, never proof that the credential belongs to the intended
+owner or permits a future write.
+
 After review/merge and separate approval to configure the dedicated credential,
 the human can run Actions > Token context test (read-only, manual) > Run workflow,
 branch master, confirm TEST. Only the personal GitHub account reihl is allowed.

@@ -27,7 +27,7 @@ class Response:
 
 
 class Opener:
-    def __init__(self, raw=b'{"id":"ZZ_FAKE_ID"}', error=None):
+    def __init__(self, raw=b'{"name":"ZZ_SYNTHETIC_NAME","account_type":"basic"}', error=None):
         self.calls = []
         self.raw, self.error = raw, error
     def open(self, request, timeout):
@@ -60,8 +60,39 @@ class Tests(unittest.TestCase):
                     b'{"id":123}', b'{"guid":""}', b'{"id":" "}',
                     b'{"id":"ZZ","id":"YY"}', b'\xff', b'x' * 65537):
             self.assertEqual(probe.check(TOKEN, Opener(raw))[1], 1)
-    def test_guid_shape(self):
-        self.assertEqual(probe.check(TOKEN, Opener(b'{"guid":"ZZ"}'))[1], 0)
+    def test_documented_user_response_without_profile_ids(self):
+        for account_type in ('basic', 'plus', 'pro'):
+            raw = ('{"name":"ZZ_SYNTHETIC_NAME","account_type":"'
+                   + account_type + '"}').encode()
+            self.assertEqual(probe.check(TOKEN, Opener(raw))[1], 0)
+
+    def test_profile_only_and_bad_user_shapes_stop(self):
+        for raw in (b'{"id":"ZZ"}', b'{"guid":"ZZ"}',
+                    b'{"name":"ZZ"}', b'{"account_type":"basic"}',
+                    b'{"name":null,"account_type":"basic"}',
+                    b'{"name":123,"account_type":"basic"}',
+                    b'{"name":" ","account_type":"basic"}',
+                    b'{"name":"ZZ","account_type":null}',
+                    b'{"name":"ZZ","account_type":123}',
+                    b'{"name":"ZZ","account_type":"unknown"}',
+                    b'{"name":"ZZ","account_type":"Basic"}',
+                    b'{"name":"ZZ","account_type":["basic"]}',
+                    b'{"name":"ZZ","account_type":"pro","error":"ZZ"}',
+                    b'{"name":"ZZ","name":"YY","account_type":"pro"}'):
+            verdict, code = probe.check(TOKEN, Opener(raw))
+            self.assertEqual(code, 1)
+            self.assertNotIn('ZZ', verdict)
+
+    def test_user_fields_never_printed(self):
+        with patch.dict(os.environ, {'TOKEN_PROBE_CREDENTIAL': TOKEN}), patch.object(
+                probe.urllib.request, 'build_opener', return_value=Opener()):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(probe.main(), 0)
+            self.assertEqual(output.getvalue(),
+                             'TOKEN_CONTEXT_RESPONSE_OK_OWNER_NOT_VERIFIED\n'
+                             'GENI_WRITES=0; OWNER_IDENTITY=NOT_VERIFIED\n')
+            self.assertNotIn('ZZ_SYNTHETIC_NAME', output.getvalue())
     def test_failures_never_retry_or_disclose(self):
         for code in (301, 302, 307, 401, 403, 429, 500, 503):
             error = urllib.error.HTTPError(probe.URL, code, TOKEN, {}, io.BytesIO(TOKEN.encode()))

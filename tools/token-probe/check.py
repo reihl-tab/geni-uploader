@@ -47,9 +47,10 @@ def check(token, opener=None):
         data = json.loads(raw.decode('utf-8'), object_pairs_hook=unique_object)
         if not isinstance(data, dict) or not data or 'error' in data:
             return 'STOP_UNCONFIRMED_RESPONSE', 1
-        # Only a shape check. These identifiers never leave this process.
-        if not any(isinstance(data.get(k), str) and data[k].strip()
-                   for k in ('id', 'guid')):
+        # /api/user documents name + account_type, not profile id/guid.
+        # Values never leave this process; this cannot verify owner identity.
+        if (not isinstance(data.get('name'), str) or not data['name'].strip()
+                or data.get('account_type') not in ('basic', 'plus', 'pro')):
             return 'STOP_CONTEXT_SHAPE_UNKNOWN', 1
         return 'TOKEN_CONTEXT_RESPONSE_OK_OWNER_NOT_VERIFIED', 0
     except urllib.error.HTTPError as error:
