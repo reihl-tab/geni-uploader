@@ -95,7 +95,8 @@ public logs. Public output is fixed counts/statuses only, not even local IDs.
   Always persist an already received acknowledgement and perform GET-only
   verification even after expiry. Acknowledged-ID GET-only resume does not need
   a fresh receipt. New plans incorporate acknowledged/blocked journal entries
-  as state, never unexplained new parents or permission for another POST. The
+  as known state, not unexplained new parents. Journal entries never grant permission
+  for any POST. The
   receipt binds the initial plan-time state head. Run must start at that
   head; thereafter each verified intent/ack/result commit is a recorded expected
   descendant within this run. Unknown remote changes still stop. A later parent
@@ -103,6 +104,9 @@ public logs. Public output is fixed counts/statuses only, not even local IDs.
   run is tracked as a verified expected graph delta, not an unexplained change.
 - Readback verifies every sent field, public:false, is_alive, gender and actual
   parent relationship. A missing field is unverifiable, not a default success.
+  After an expiry stop with an unacknowledged intent, do not reuse an expired
+  receipt or resume POST; use the manual uncertain-intent procedure below.
+  A fresh plan cannot clear that intent or make its POST runnable.
 
 ```mermaid
 flowchart TD
