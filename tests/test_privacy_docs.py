@@ -108,7 +108,10 @@ def test_callback_diagnostics_are_fixed_presence_only_before_url_clear():
     page = (ROOT / 'docs/oauth-callback.html').read_text()
     script = re.search(r'<script>(.*?)</script>', page, re.DOTALL).group(1)
     assert script.index('const diagnostics') < script.index('history.replaceState')
-    assert '.get(' not in script[script.index('const query'):script.index('history.replaceState')]
+    assert script.count('.get(') == 1
+    assert script.count("fields.get('access_token')") == 1
+    assert script.count('location.search') == 1
+    assert script.count('new URLSearchParams(location.search)') == 1
     harness = r'''
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
