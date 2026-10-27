@@ -25,3 +25,17 @@ def test_landing_links_terms_and_privacy_without_authorizing_access():
     assert 'do not create an account' in terms
     assert '[Privacy Policy](privacy.md)' in terms
     assert 'Geni' in terms and 'GitHub' in terms
+
+
+def test_callback_is_static_no_collection_fallback():
+    page = (ROOT / 'docs/oauth-callback.html').read_text()
+    assert 'layout: null' in page
+    assert "history.replaceState(null, '', location.pathname)" in page
+    assert 'name="referrer" content="no-referrer"' in page
+    assert "default-src 'none'" in page
+    for forbidden in ('location.search', 'location.hash', 'document.cookie',
+                      'localStorage', 'sessionStorage', 'fetch(', 'XMLHttpRequest',
+                      '<form', '<iframe', '<img', 'src=', 'href=', 'console.'):
+        assert forbidden not in page
+    assert 'does not complete a login or collect a token' in page
+    assert 'JavaScript is off' in page

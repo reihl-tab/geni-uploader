@@ -91,3 +91,13 @@ https://github.com/reihlinstinct/geni-uploader/issues.
 Do not include personal records or credentials. A private access or deletion
 request should go to the operator or custodian through the private channel
 already agreed with them, not a public issue.
+
+## Static authorization fallback page
+
+The project's static callback page does not complete login or collect tokens.
+It does not read, display, store or forward response parameters. With JavaScript
+enabled it removes query and fragment text from the visible address. If a query
+parameter reaches the host, GitHub may already have processed it before this
+page loads; browser history or hosting retention is outside the page's control.
+A URL fragment is processed by the browser, not sent in the HTTP request.
+Do not send OAuth response URLs to anyone or assume this page erases prior data.

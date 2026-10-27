@@ -1,0 +1,38 @@
+---
+layout: null
+---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<script>
+// This is a registration fallback, not a token collection endpoint.
+// Do not read, display, store or transmit any OAuth response parameters.
+history.replaceState(null, '', location.pathname);
+</script>
+<title>Geni authorization - stop here</title>
+<style>
+body {font: 18px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 4rem auto; padding: 0 1.5rem; color: #17212b; background: #f8fafc;}
+h1 {font-size: 1.7rem; line-height: 1.25;}
+.notice {padding: 1rem 1.25rem; border-left: 4px solid #935b00; background: #fff6e5;}
+</style>
+</head>
+<body>
+<h1>Geni authorization: stop here</h1>
+<p class="notice">This page does not complete a login or collect a token.</p>
+<p>If you arrived here after authorizing an application, stop and return to the
+private setup conversation. Report only that you reached this page. Do not send
+the browser address, an access token, an application secret or a screenshot of
+credentials.</p>
+<p>Any query or fragment is removed from the visible address when JavaScript is
+available. No response parameters are read, displayed, stored or forwarded by
+this page. Your browser or the hosting service may retain prior navigation data;
+this page cannot erase it. Do not retry authorization until the intended flow
+has been checked.</p>
+<noscript><p>JavaScript is off, so this page could not clear the address bar.
+Do not copy the address. Close this tab and report only that setup stopped.</p></noscript>
+</body>
+</html>
