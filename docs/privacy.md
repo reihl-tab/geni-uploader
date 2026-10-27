@@ -94,16 +94,26 @@ already agreed with them, not a public issue.
 
 ## Client-side token helper page
 
-The static callback page reads access_token from the URL fragment locally in
-that browser, displays it in a read-only field and offers a Copy button using
-the system clipboard. It clears the visible response URL after reading the
-fragment. The page does not send the token over the network, use analytics or
-external resources, or save it in cookies or browser storage. The page code is
-public; the token is not published by that code. Using this page does not grant
-token custody to anyone. Paste only into a separately agreed secure vault form,
-never chat, email or a public issue. Close the tab and clear the clipboard after
-use. Clipboard history, sync, extensions, other apps or a screen capture may
-expose a displayed or copied token. Clearing the display does not erase prior
-copies. Browser history and hosting retention remain outside this page's
-control. A URL fragment is not sent in the HTTP request; query parameters can
-reach the host before the page loads. Do not put tokens in query parameters.
+The static callback page reads only access_token values from the URL fragment or
+query locally in that browser, displays the token in a read-only field and offers
+an explicit Copy button using the system clipboard. It clears the visible response
+URL immediately after parsing. Conflicting or repeated token fields are refused.
+Other response fields are checked only for fixed-name presence, not read by value.
+
+A fragment is not sent in the HTTP page request. A query token IS sent to the
+hosting service before the page code runs, and can be retained in hosting or
+infrastructure logs and browser history. This helper cannot prevent or erase that
+initial disclosure. The page script makes no further network requests, uses no
+analytics or external resources, and saves nothing in cookies or browser storage.
+It is not accurate to say that a query token never leaves the browser.
+
+Use only with informed acceptance of this hosting exposure, or choose a separately
+reviewed local authorization route instead. Do not manually move a token into a
+query URL. Revoke any exposed authorization using Geni's controls before requesting
+a replacement; issuing a new token is not proof the old one is revoked.
+
+The code is public; it does not publish the token itself or grant custody. Paste
+only into a separately agreed secure vault form, never chat, email or a public
+issue. Close the tab and clear the clipboard after use. Clipboard history, sync,
+extensions, other apps or screen captures can expose it. Clearing the page cannot
+erase prior copies, browser history, hosting retention or previously sent requests.

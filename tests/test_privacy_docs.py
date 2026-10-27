@@ -27,7 +27,7 @@ def test_landing_links_terms_and_privacy_without_authorizing_access():
     assert 'Geni' in terms and 'GitHub' in terms
 
 
-def test_callback_is_client_side_fragment_only_with_pinned_script():
+def test_callback_reads_only_access_token_with_pinned_script():
     import base64
     import hashlib
     import re
@@ -44,7 +44,8 @@ def test_callback_is_client_side_fragment_only_with_pinned_script():
                       '<iframe', '<img', 'src=', 'href=', 'console.', 'innerHTML'):
         assert forbidden not in page
     assert "new URLSearchParams(location.hash.slice(1))" in script
-    assert "fields.get('access_token')" in script
+    assert "fields.getAll('access_token')" in script
+    assert "query.getAll('access_token')" in script
     assert 'navigator.clipboard.writeText(output.value)' in script
     assert "output.value = ''" in script
     assert 'Never paste it into chat' in page
@@ -108,8 +109,10 @@ def test_callback_diagnostics_are_fixed_presence_only_before_url_clear():
     page = (ROOT / 'docs/oauth-callback.html').read_text()
     script = re.search(r'<script>(.*?)</script>', page, re.DOTALL).group(1)
     assert script.index('const diagnostics') < script.index('history.replaceState')
-    assert script.count('.get(') == 1
-    assert script.count("fields.get('access_token')") == 1
+    assert script.count('.get(') == 0
+    assert script.count('.getAll(') == 2
+    assert script.count("fields.getAll('access_token')") == 1
+    assert script.count("query.getAll('access_token')") == 1
     assert script.count('location.search') == 1
     assert script.count('new URLSearchParams(location.search)') == 1
     harness = r'''
@@ -118,7 +121,7 @@ const assert = require('node:assert/strict');
 const cases = [
   ['', '', 'refreshed or reopened'],
   ['?code=ZZSECRET', '', 'authorization-code field'],
-  ['?access_token=ZZSECRET', '', 'token field was present in the query'],
+  ['?access_token=', '', 'empty token field'],
   ['?error=ZZSECRET', '', 'error or status field'],
   ['?status=ZZSECRET', '', 'error or status field'],
   ['', '#error=ZZSECRET', 'error or status field'],
@@ -142,4 +145,41 @@ for (const [search, hash, expected] of cases) {
   assert.equal(elements.copy.hidden, true);
 }
 '''.replace('SCRIPT', json.dumps(script))
+    subprocess.run([node, '-e', harness], check=True, capture_output=True, text=True)
+
+
+def test_query_token_copy_conflicts_and_clear_failure():
+    import json
+    import re
+    import shutil
+    import subprocess
+
+    import pytest
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node unavailable for offline DOM simulation')
+    page = (ROOT / 'docs/oauth-callback.html').read_text()
+    script = re.search(r'<script>(.*?)</script>', page, re.DOTALL).group(1)
+    harness = r"""
+const vm=require('node:vm'),assert=require('node:assert/strict');
+(async()=>{
+for(const [search,hash,ok,failClear] of [
+ ['?access_token=ZZtoken%26value','',true,false],
+ ['','#access_token=ZZtoken%26value',true,false],
+ ['?access_token=ZZone&access_token=ZZtwo','',false,false],
+ ['?access_token=ZZone&%61ccess_token=ZZone','',false,false],
+ ['?access_token=ZZone','#access_token=ZZone',false,false],
+ ['?access_token=ZZone','#access_token=ZZtwo',false,false],
+ ['?access_token=ZZtoken','',false,true]
+]){
+ const elements=Object.fromEntries(['token','copy','clear','status'].map(id=>[id,{value:'',hidden:true,textContent:'',handlers:{},addEventListener(k,fn){this.handlers[k]=fn;},focus(){},select(){}}]));
+ const events=[];const location={search,hash,pathname:'/callback.html'};
+ vm.runInNewContext(SCRIPT,{URLSearchParams,location,history:{replaceState(){events.push('clear');if(failClear)throw Error('ZZsecret');location.search='';location.hash='';}},navigator:{clipboard:{async writeText(v){events.push(v);}}},document:{getElementById(id){return elements[id];},addEventListener(k,fn){fn();}}});
+ assert.equal(events[0],'clear');assert.equal(!elements.copy.hidden,ok);
+ assert(!elements.status.textContent.includes('ZZsecret'));
+ if(ok){assert.equal(elements.token.value,'ZZtoken&value');await elements.copy.handlers.click();assert.equal(events[1],'ZZtoken&value');elements.clear.handlers.click();assert.equal(elements.token.value,'');assert.equal(elements.copy.hidden,true);}
+ else {assert.equal(elements.token.value,'');assert.equal(events.length,1);}
+}
+})();
+""".replace('SCRIPT', json.dumps(script))
     subprocess.run([node, '-e', harness], check=True, capture_output=True, text=True)
