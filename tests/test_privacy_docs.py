@@ -39,7 +39,7 @@ def test_callback_is_client_side_fragment_only_with_pinned_script():
     script = re.search(r'<script>(.*?)</script>', page, re.DOTALL).group(1)
     digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
     assert "script-src 'sha256-" + digest + "'" in page
-    for forbidden in ('location.search', 'document.cookie', 'localStorage',
+    for forbidden in ('document.cookie', 'localStorage',
                       'sessionStorage', 'fetch(', 'XMLHttpRequest', '<form',
                       '<iframe', '<img', 'src=', 'href=', 'console.', 'innerHTML'):
         assert forbidden not in page
@@ -73,7 +73,7 @@ const assert = require('node:assert/strict');
         addEventListener(k, fn) {this.handlers[k]=fn;}, focus(){}, select(){}}]));
     const events = [];
     const ctx = {URLSearchParams,
-      location:{hash:found?'#access_token=ZZtoken%26value&expires_in=99':'#error=denied', pathname:'/callback.html'},
+      location:{search:'', hash:found?'#access_token=ZZtoken%26value&expires_in=99':'#error=denied', pathname:'/callback.html'},
       history:{replaceState(a,b,c){events.push(c);}},
       navigator:{clipboard:{async writeText(value){events.push(value);}}},
       document:{getElementById(id){return elements[id];},
@@ -91,5 +91,52 @@ const assert = require('node:assert/strict');
     }
   }
 })();
+'''.replace('SCRIPT', json.dumps(script))
+    subprocess.run([node, '-e', harness], check=True, capture_output=True, text=True)
+
+
+def test_callback_diagnostics_are_fixed_presence_only_before_url_clear():
+    import json
+    import re
+    import shutil
+    import subprocess
+
+    import pytest
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node unavailable for offline DOM simulation')
+    page = (ROOT / 'docs/oauth-callback.html').read_text()
+    script = re.search(r'<script>(.*?)</script>', page, re.DOTALL).group(1)
+    assert script.index('const diagnostics') < script.index('history.replaceState')
+    assert '.get(' not in script[script.index('const query'):script.index('history.replaceState')]
+    harness = r'''
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const cases = [
+  ['', '', 'refreshed or reopened'],
+  ['?code=ZZSECRET', '', 'authorization-code field'],
+  ['?access_token=ZZSECRET', '', 'token field was present in the query'],
+  ['?error=ZZSECRET', '', 'error or status field'],
+  ['?status=ZZSECRET', '', 'error or status field'],
+  ['', '#error=ZZSECRET', 'error or status field'],
+  ['', '#status=ZZSECRET', 'error or status field'],
+  ['', '#unknown=ZZSECRET', 'fragment was present'],
+  ['', '#access_token=', 'fragment was present'],
+  ['?ZZSECRET=ZZSECRET', '', 'No recognized response fields'],
+];
+for (const [search, hash, expected] of cases) {
+  const elements = Object.fromEntries(['token','copy','clear','status'].map(id =>
+    [id, {value:'', hidden:true, textContent:'', addEventListener(){}}]));
+  const location = {search, hash, pathname:'/callback.html'};
+  const ctx = {URLSearchParams, location,
+    history:{replaceState(a,b,c){assert.equal(c,'/callback.html');location.search='';location.hash='';}},
+    document:{getElementById(id){return elements[id];},
+      addEventListener(k,fn){fn();}}};
+  vm.runInNewContext(SCRIPT, ctx);
+  assert.ok(elements.status.textContent.includes(expected), elements.status.textContent);
+  assert.ok(!elements.status.textContent.includes('ZZSECRET'));
+  assert.equal(elements.token.value, '');
+  assert.equal(elements.copy.hidden, true);
+}
 '''.replace('SCRIPT', json.dumps(script))
     subprocess.run([node, '-e', harness], check=True, capture_output=True, text=True)

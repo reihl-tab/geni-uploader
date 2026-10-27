@@ -7,18 +7,32 @@ layout: null
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-62TX9huj9AEFoczNxKRR/B0IkJ0PBds3I/SA0WBnD7U='; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-53EiKaPtrXTxgIPRFyLhO5f0M1xpLFnegFXlep7sha4='; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <script>
 'use strict';
 const fields = new URLSearchParams(location.hash.slice(1));
 const token = fields.get('access_token') || '';
+// Fixed booleans only: never display arbitrary keys, values or the address.
+const query = new URLSearchParams(location.search);
+const diagnostics = {
+  code: query.has('code'),
+  queryToken: query.has('access_token'),
+  queryError: query.has('error') || query.has('status'),
+  fragmentError: fields.has('error') || fields.has('status'),
+  fragmentPresent: location.hash.length > 1
+};
 history.replaceState(null, '', location.pathname);
 document.addEventListener('DOMContentLoaded', () => {
   const output = document.getElementById('token');
   const copy = document.getElementById('copy');
   const status = document.getElementById('status');
   if (!token) {
-    status.textContent = 'No access token was found in the URL fragment. Stop and check the authorization flow.';
+    let detail = 'No recognized response fields were found. If this page was refreshed or reopened, its earlier response was already cleared. Do not share the address.';
+    if (diagnostics.code) detail = 'An authorization-code field was present. This page does not exchange codes. Stop and check the authorization flow.';
+    else if (diagnostics.queryToken) detail = 'A token field was present in the query, not the fragment. This page does not read query token values. Stop and check the authorization flow.';
+    else if (diagnostics.queryError || diagnostics.fragmentError) detail = 'An error or status field was present. Its value is not shown. Stop and check the authorization flow.';
+    else if (diagnostics.fragmentPresent) detail = 'A fragment was present without an access-token value. Stop and check the authorization flow.';
+    status.textContent = 'No access token was found in the URL fragment. ' + detail;
     return;
   }
   output.value = token;
@@ -59,10 +73,11 @@ button {padding: .6rem 1rem; margin: .5rem .5rem .5rem 0; font: inherit; cursor:
 <textarea id="token" aria-label="Sensitive Geni access token" readonly hidden autocomplete="off" spellcheck="false"></textarea>
 <button id="copy" type="button" hidden>Copy token</button>
 <button id="clear" type="button">Clear token display</button>
-<p>This page reads only the URL fragment in your browser, clears the visible
-address, and does not send or store the token. Copy uses your system clipboard,
+<p>This page reads token values only from the URL fragment in your browser. It also
+checks for a fixed set of response-field names without reading their query values,
+clears the visible address, and does not send or store the token. Copy uses your system clipboard,
 which may be available to clipboard history, sync or other apps. Clear it after
-pasting. Close this tab when finished. Clearing the display cannot erase prior
+pasting. Refreshing or reopening the cleared address cannot recover a token. Close this tab when finished. Clearing the display cannot erase prior
 copies, browser history or hosting logs. Do not authorize again just to test.</p>
 <noscript><p>JavaScript is off. Do not copy the address or send a screenshot.
 Close this tab and ask for setup help without sharing credentials.</p></noscript>
