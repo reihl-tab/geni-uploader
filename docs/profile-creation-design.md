@@ -81,7 +81,7 @@ public logs. Public output is fixed counts/statuses only, not even local IDs.
 - A private local plan receipt contains creation time, expiry (15 minutes),
   manifest/schema digest, canonical owner/anchor IDs, every exact payload hash,
   state-ref head and complete parent-set fingerprint. Canonical JSON SHA256 binds
-  ALL these selections. It contains no token. Store mode0600 on the operator's
+  ALL these selections. It contains no token. Store mode 0600 on the operator's
   machine; do not publish it or use a CI artifact. No future-time or expired receipt.
 - Phase 1 people-plan and people-run are local-operator-only CLI commands, not
   Actions dispatches. The private receipt stays on that same operator machine;
@@ -97,10 +97,10 @@ public logs. Public output is fixed counts/statuses only, not even local IDs.
   a fresh receipt. New plans incorporate acknowledged/blocked journal entries
   as known state, not unexplained new parents. Journal entries never grant
   permission for any POST. The receipt binds the initial plan-time state head.
-  Run must start at that
-  head; thereafter each verified intent/ack/result commit is a recorded expected
-  descendant within this run. Unknown remote changes still stop. A parent verified earlier in the same run
-  is tracked as a verified expected graph delta, not an unexplained change.
+  Run must start at that head; thereafter each verified intent/ack/result commit
+  is a recorded expected descendant within this run. Unknown remote changes still
+  stop. A parent verified earlier in the same run is tracked as a verified expected
+  graph delta, not an unexplained change.
 - Readback verifies every sent field, public:false, is_alive, gender and actual
   parent relationship. A missing field is unverifiable, not a default success.
   After an expiry stop with an unacknowledged intent, do not reuse an expired
@@ -114,13 +114,19 @@ flowchart TD
   G -->|no| S[Stop, no writes]
   G -->|yes| R[Private expiring plan receipt]
   R --> H[Human confirms count and proposal]
-  H --> C[Repeat preconditions and persist intent]
+  H --> E{Receipt valid before new intent?}
+  E -->|no| S
+  E -->|yes| C[Repeat preconditions and persist intent]
   C --> D{Remote intent commit confirmed?}
   D -->|no| S
-  D -->|yes| W[POST once]
-  W --> A[Persist acknowledged ID]
-  A --> B[GET fields and parent relationship]
-  B -->|unverifiable| U[Stop, no blind retry]
+  D -->|yes| X{Receipt still valid before POST?}
+  X -->|no| U[Stop, uncertain intent; manual resolution only]
+  X -->|yes| W[POST once]
+  W -->|ID acknowledged| A[Persist acknowledged ID even after expiry]
+  W -->|no acknowledged ID| U
+  A --> B[GET fields and parent relationship even after expiry]
+  J[Resume with durable acknowledged ID; no fresh receipt needed] --> B
+  B -->|unverifiable| T[Stop, GET-only resume; no create retry]
   B -->|verified| N[Persist verified result]
 ```
 
@@ -140,7 +146,7 @@ stay within that checkout: refuse symlinks, traversal, unexpected dirty files an
 mismatched manifest. Atomically replace and fsync file and parent directory. Before
 POST, commit/push an intent containing payload hash and operation ordinal. Fetch
 remote ref independently and require exact equality to the intended commit SHA, not
-push exit0 or an ancestor check. Non-fast-forward/concurrent changes,
+push exit 0 or an ancestor check. Non-fast-forward/concurrent changes,
 protected-branch rejection, missing git identity or any durability error mean STOP
 before POST. No rebase/merge/force during a run.
 
@@ -181,11 +187,38 @@ contents read/write only plus mandatory metadata read; no administration, workfl
 or protection-bypass authority. The data repository uses a distinct read-only
 credential. Neither credential is put in a receipt, journal or git history, and
 agents do not use these credentials for live runs. A repository-scoped token does
-not itself impose branch-only write permission. Require verified server-side rules
-that prevent this principal from writing the state repository's default/protected
-branches, with no bypass grant. If that restriction or effective permissions cannot
-be verified, production run is blocked; never claim a branch-scoped PAT or silently
-rely on a code-only branch check. No token in git, logs, plan receipts or artifacts.
+not itself impose branch-only write permission. The following server-side
+rulesets are mandatory, not a suggested code-only check:
+
+- An active branch ruleset targets all branches except the exact provisioned state
+  ref. It enables Restrict creations, Restrict updates and Restrict deletions. The
+  operator principal has no bypass through user, team, role, app or inherited rules.
+  This covers the default branch, other protected branches and new alternate refs.
+- A separate active ruleset targets the exact state ref. It enables Restrict
+  deletions and Block force pushes, with no bypass for the operator principal.
+  Normal fast-forward state pushes remain allowed. Neither run nor recovery may
+  weaken these rules or delete/recreate the state ref.
+- Before planning and immediately before each new intent, verify the authenticated
+  credential's principal, selected private repository and effective write scope.
+  Inspect effective rules for both the exact state ref and the default ref, plus
+  the complete active ruleset definitions, include/exclude conditions, inherited
+  rules and bypass lists. Record ruleset IDs, updated versions and principal/role
+  evidence in the private receipt. Recheck that evidence before POST; changes stop
+  the run. Do not infer an empty bypass list from a response that omits it.
+- The contents-only run credential may not expose complete ruleset/bypass metadata.
+  Use a separate read-only audit identity with the access required to inspect it,
+  never grant administration permission to the run credential. If the account plan
+  lacks enforceable private-repository rulesets, the audit identity cannot inspect
+  all relevant definitions or principal memberships, or the required coverage and
+  non-bypass status cannot be verified, production is blocked. No test push, force
+  push or deletion is used as a permissions probe.
+
+GitHub rule meanings and availability must be checked against current documentation:
+https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets
+and
+https://docs.github.com/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets
+
+Never claim a branch-scoped PAT. No token in git, logs, plan receipts or artifacts.
 The human operator completes OAuth and runs it. Geni's restrictions still apply; an
 API endpoint or human trigger does not prove compliance. No promise that the token
 is technically limited to one tree.
@@ -205,6 +238,9 @@ production/E2E boundary. Tests cannot settle the API blockers listed above.
 - Every sent field/private readback, missing field, node/GUID ambiguity, merged IDs.
 - Intent push rejection on protected ref, remote SHA race, public repo, dirty tree,
   state symlink/traversal, manifest change and concurrent writers.
+- Missing/disabled rulesets, wrong branch conditions, omitted bypass metadata,
+  inherited bypass membership, changed policy evidence, non-fast-forward state
+  updates and state deletion all block before a new POST.
 - Kill/error at each fsync/push/POST/ack/readback boundary, 429, malformed response,
   receipt expiry before intent/POST versus after acknowledgement, acknowledged
   GET-only resume and blocked unknown intent.
