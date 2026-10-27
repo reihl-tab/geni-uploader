@@ -231,3 +231,8 @@ emit their own pass marker after completion. No extra service calls or write per
 Read-only metadata plans require a token and exit nonzero before identity checks
 when no token is available. This is intentional: an unverified plan cannot be
 complete or ready. Optional summary persistence never replaces the plan outcome.
+
+An upload `plan` without a token can return exit code 0 for a local preview,
+but its report remains incomplete and says `Safe to run: no`. Exit code 0
+alone does not prove readiness or authorize a write. This differs from the
+metadata `details-plan` above, which exits nonzero when no token is available.

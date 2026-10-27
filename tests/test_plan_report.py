@@ -256,3 +256,17 @@ def test_renderer_failure_falls_back_without_stopping_log_preservation(tmp_path)
     assert 'ZZcontinued' in result.stdout
     assert 'Safe to run: no' in summary.read_text()
     assert 'Summary renderer failed' in summary.read_text()
+
+
+def test_no_token_upload_preview_exit_zero_is_not_readiness(tmp_path, monkeypatch):
+    destination = tmp_path / 'report'
+    monkeypatch.setenv('GENI_PLAN_REPORT', str(destination))
+    monkeypatch.setattr(g, 'load_manifest', lambda *args: copy.deepcopy(MANIFEST))
+    monkeypatch.setattr(g, 'get_token', lambda *args: None)
+    assert g.cmd_plan(argparse.Namespace(manifest='ZZpath')) == 0
+    data = json.loads(destination.read_text())
+    assert data['complete'] is False
+    assert 'Safe to run: no' in r.render(data)
+    readme = (Path(__file__).parents[1] / 'README.md').read_text()
+    assert 'An upload `plan` without a token can return exit code 0' in readme
+    assert 'Exit code 0\nalone does not prove readiness' in readme
