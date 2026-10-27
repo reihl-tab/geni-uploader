@@ -111,7 +111,11 @@ def test_details_paths_never_publish_manifest_or_exception(tmp_path, failure):
         if failure == 'check':
             check.side_effect = s.api.ApiError('ZZPrivateObjectID')
         assert s.main() == (0 if failure is None else 1)
-    text = r.render(json.loads(destination.read_text()))
+    data = json.loads(destination.read_text())
+    if failure == 'check':
+        assert data['checks']['identity'] == 'fail'
+        assert data['checks']['preconditions'] == 'fail'
+    text = r.render(data)
     assert 'ZZPrivate' not in text
     assert ('Safe to run: yes' in text) == (failure is None)
     assert_private_absent(text, ITEM)
@@ -218,3 +222,37 @@ def test_details_plan_without_token_stops_before_any_checks(tmp_path, monkeypatc
     monkeypatch.setattr(s.api, 'execute', forbidden)
     assert s.main() == 1
     assert 'Safe to run: no' in r.render(json.loads((tmp_path / 'report').read_text()))
+
+
+def test_new_report_removes_stale_passing_report_before_plan_runs(tmp_path, monkeypatch):
+    destination = tmp_path / 'report'
+    destination.write_text('ZZstale passing report')
+    monkeypatch.setenv('GENI_PLAN_REPORT', str(destination))
+    data = r.report('plan')
+    assert not destination.exists()
+    assert not data['complete']
+
+
+def test_failed_save_removes_existing_report(tmp_path, monkeypatch):
+    data = r.report('plan')
+    destination = tmp_path / 'report'
+    destination.write_text('ZZstale')
+    monkeypatch.setenv('GENI_PLAN_REPORT', str(destination))
+    data['counts']['sources'] = 100001
+    r.save(data)
+    assert not destination.exists()
+
+
+def test_renderer_failure_falls_back_without_stopping_log_preservation(tmp_path):
+    import subprocess
+    workflow = (Path(__file__).parents[1] / '.github/workflows/geni-upload.yml').read_text()
+    block = workflow[workflow.index('            docker run --rm --network none --entrypoint python'):]
+    block = block[:block.index('          fi')]
+    summary = tmp_path / 'summary'
+    env = dict(os.environ, RUNNER_TEMP=str(tmp_path), GITHUB_STEP_SUMMARY=str(summary), IMAGE='ZZimage')
+    result = subprocess.run(['bash', '-e', '-c', 'docker() { return 1; }\n' + block + '\necho ZZcontinued'],
+                            check=False, env=env, capture_output=True, text=True)
+    assert result.returncode == 0
+    assert 'ZZcontinued' in result.stdout
+    assert 'Safe to run: no' in summary.read_text()
+    assert 'Summary renderer failed' in summary.read_text()

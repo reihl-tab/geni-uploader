@@ -11,6 +11,13 @@ STATUSES = frozenset({'pass', 'fail', 'skipped', 'not_required'})
 def report(mode):
     if mode not in {'plan', 'details-plan'}:
         raise ValueError('invalid report mode')
+    # A new attempt must not inherit readiness from an older local report.
+    path = os.environ.get('GENI_PLAN_REPORT')
+    if path:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
     return {'mode': mode, 'counts': dict.fromkeys(COUNTS, 0),
             'checks': dict.fromkeys(CHECKS, 'skipped'), 'complete': False}
 

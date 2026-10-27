@@ -152,7 +152,10 @@ jobs:
               -v "$RUNNER_TEMP/plan-report:/run/plan-report:ro" \
               -v "$GITHUB_STEP_SUMMARY:/run/job-summary" \
               -e GITHUB_STEP_SUMMARY=/run/job-summary \
-              "$IMAGE" /opt/plan_report.py /run/plan-report/report.json || exit 1
+              "$IMAGE" /opt/plan_report.py /run/plan-report/report.json || {
+              printf '%s\n' '## Read-only plan summary' '' 'Safe to run: no' \
+                'Summary renderer failed; inspect the protected log.' >> "$GITHUB_STEP_SUMMARY"
+            }
           fi
           if { [ "$MODE" = "plan" ] || [ "$MODE" = "details-plan" ]; } &&
              [ "${PLAN_SUMMARY_IMAGE_READY:-no}" != "yes" ]; then
