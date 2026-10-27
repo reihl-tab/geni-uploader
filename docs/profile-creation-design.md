@@ -11,7 +11,7 @@ operator triggers the tool under that authority. An operator is not automaticall
 the owner. Both must be named in the private approval record. All public examples
 use synthetic ZZ-prefixed names. No family data belongs in this public repository.
 
-Phase 1 excludes local-id anchors, other relations, dates/events, profile edits,
+Phase 1 permits stable per-entry local IDs for state bookkeeping, but excludes local-ID anchors, other relations, dates/events, profile edits,
 merges, photos, email/invitations, deletion and automatic name-match reconciliation.
 Those features require separate design and review, not a schema flag or force mode.
 
@@ -81,10 +81,16 @@ in public logs. Public output is fixed counts/statuses only, not even local IDs.
   state-ref head and complete parent-set fingerprint. Canonical JSON SHA256 binds
   ALL these selections. It contains no token. Store mode0600 on the operator's
   machine; do not publish it or use a CI artifact. No future-time or expired receipt.
+- Phase 1 people-plan and people-run are local-operator-only CLI commands, not
+  Actions dispatches. The private receipt stays on that same operator machine;
+  there is no CI artifact transfer or cross-run receipt transport. Any later
+  Actions version needs a separate reviewed receipt/authentication design.
 - people-run requires receipt hash, matching confirm-count and cap<=2. Recompute
   digest and independently repeat account, names, slots, graph, private repo and
   state checks immediately before every POST. Receipt changes/expiry or changed
-  parent set require a new plan and approval. A later parent created by this same
+  parent set require a new plan and approval. The receipt binds the initial plan-time state head. Run must start at that
+  head; thereafter each verified intent/ack/result commit is a recorded expected
+  descendant within this run. Unknown remote changes still stop. A later parent created by this same
   run is tracked as a verified expected graph delta, not an unexplained change.
 - Readback verifies every sent field, public:false, is_alive, gender and actual
   parent relationship. A missing field is unverifiable, not a default success.
@@ -127,7 +133,10 @@ After POST acknowledgement, save/commit/push returned ID before verification.
 After verification, persist verified state. Error, 429, timeout or kill always
 stops. An intent without acknowledged ID blocks later creation, including a kill
 between intent push and POST. An acknowledged ID permits GET-only verification,
-never another create. No error text or credentials in commits or public output.
+never another create. No error text or credentials in commits or public output. Fixed diagnostic
+phases, payload hashes, acknowledged IDs and reviewed resolutions live only in the
+private state-branch journal; the private local receipt records plan-time checks.
+There is no separate raw response dump or public diagnostic artifact.
 
 ## Manual uncertain-intent procedure
 
