@@ -53,7 +53,7 @@ rejects it does not relax this tool's private-only policy.
 
 schema_version: 1. Exact keys, bounded strings, no unknown API fields. Owner ref
 and expect_name identify the existing root. Two or fewer entries, each relation
-parent and anchor equal to that owner; no local anchors or graph sorting needed.
+parent and anchor equal to that owner; per-entry local IDs identify journal entries only and cannot be anchors; no graph sorting is needed.
 Each entry has stable local id, supplied name fields, gender, explicit boolean
 is_alive, requested_by_owner:true and private_storage_approved:true. Record the
 source and date of the owner's approvals privately, never infer flags. The operator
@@ -120,7 +120,9 @@ The user provisions a writable private state ref. No fallback to another branch,
 admin push or force push. Verify repository private via authenticated GitHub read.
 
 Under exclusive local flock and a single remote-state writer, fetch state head,
-require exact expected SHA and validate strict journal schema/manifest hash. Path
+require exact expected SHA and validate strict journal schema/manifest hash.
+The first expected SHA is the receipt-bound plan-time state head; each later
+expected SHA is the last independently fetched and confirmed commit from this run. Path
 must stay within that checkout: refuse symlinks, traversal, unexpected dirty files
 and mismatched manifest. Atomically replace and fsync file and parent directory.
 Before POST, commit/push an intent containing payload hash and operation ordinal.
