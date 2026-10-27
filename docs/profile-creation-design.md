@@ -107,3 +107,93 @@ Unit: manifest validation (required fields, `is_alive`, consent gate, schema_ver
 ## Delivery
 
 Issue, this design doc via PR, then implementation PR (minor version bump, CHANGELOG, README schema with invented names). Image build and digest pin only on the user's go; the new mode stays disabled until pinned.
+
+## Version 0.3 amendment: first release is parent-only
+
+This section supersedes conflicting version 0.2 statements above. Implementation
+must follow these limits; other relations stay disabled until separately reviewed.
+
+### Stages and identities
+
+- `people-validate` is local schema/order validation, with no network or secrets.
+- `people-plan` is read-only remote validation, using the operator's token. It
+  verifies the owner and anchor, checks existing parents and reports counts only.
+  It never creates profiles, mutates state or claims that validation is consent.
+- `people-run` independently repeats all remote preconditions before any write.
+  It requires an explicit count equal to the number of pending creates, a cap,
+  an exact manifest digest from a successful plan and a confirmed private repo.
+- Phase 1 supports only two or fewer `parent` entries attached to the same existing
+  owner profile. No local anchors, children, partners, siblings, standalone
+  profiles, merges, profile edits, photos, emails or invitations. Later phases
+  can extend this after review. This restriction is technical, not an implication
+  that a generic account token is technically limited to a single tree.
+- A wrong account, unresolved ID form, missing owner identity or mismatched anchor
+  stops before any mutation. No names, IDs, URLs or exception text in public logs.
+
+### Manifest and privacy
+
+`is_alive` must be an explicit boolean. Unknown or omitted status is rejected;
+version 0.2's allowance for unknown status is withdrawn. Every entry must carry
+explicit `requested_by_owner: true` and private storage approval. All profiles in
+this first release are sent with `public: false`, including deceased people.
+Names contain only supplied nonempty strings, bounded in size; no guessed surname,
+transliteration, date, relationship or flag. Names and gender are the only writable
+profile fields in phase 1; dated events and arbitrary API keys remain rejected.
+A missing maiden name is not invented. Readback must verify every sent name field,
+privacy, living status, gender and the parent relationship, not just the POST ID.
+
+### Family graph and duplicate policy
+
+Use the documented `profile/immediate-family` focus/nodes response, then the
+`union` record's `partners` and `children` arrays to establish the relationship.
+The focus must be a child of a union and its parents the union's partners.
+A child/partner role or a profile name alone is never evidence of parenthood.
+Unknown/sparse/malformed graphs, hidden parents, incomplete edges or unresolved
+GUID/node mapping stop the plan; they are not an empty family.
+
+Sources inspected without account operations:
+- https://www.geni.com/platform/developer/help/api?path=profile/add-parent
+- https://www.geni.com/platform/developer/help/api?path=profile/immediate-family
+- https://www.geni.com/platform/developer/help/api?path=union
+- https://www.geni.com/platform/developer/help/api?path=profile
+- https://tamurajones.net/TheGeniModel.xhtml (historical graph explanation, not
+  current API proof; undocumented edges must not be assumed complete)
+
+No fuzzy or name-only automatic skip. An existing possible parent match blocks a
+new creation for human review. A completed status entry is accepted only after
+fresh identity, fields and relationship verification. An uncertain intent without
+an acknowledged ID remains blocked for manual reconciliation; no automatic
+name-match reconciliation or force/retry flag in phase 1.
+
+### Durable state before POST, not only after POST
+
+Under an exclusive lock, verify the checkout is a private GitHub repository and
+its reviewed ref/head, and that the state path is confined within it. Refuse
+symlinks, traversal, dirty/unexpected state, or a public repository. Keep state in
+a versioned manifest-bound journal, with strict phases and exact payload hash.
+
+Before each POST, atomically write/fsync an `intent` entry and commit/push it.
+Confirm the remote contains the intent before sending. Push or durability failure
+means no POST. After acknowledgement, durably save/commit/push the returned ID
+before readback. If any error, timeout, 429 or kill intervenes, the prior intent
+prevents another POST on the next run. Acknowledged IDs resume via GET only. A
+malformed, changed-manifest, uncertain or unverified state cannot be overridden.
+
+The git lock and journal do not guarantee the vendor call is reversible. There
+is no automated rollback or documented delete API in this feature. The operator
+must review manual UI options; do not promise deletion erases history or links.
+
+### Isolation, tests and release
+
+Dedicated token file and explicit private repo/ref/SHA selection. Never switch
+existing source-workflow defaults or reuse another person's credential. No
+production action from tests, agents or CI. Only synthetic ZZ-prefixed names and
+loopback fake servers, with the existing production/E2E boundary enforced.
+
+Test failure injection at every write-ahead/push/POST/readback boundary, including
+kill after POST before acknowledgement persistence, 429, malformed/hidden graph,
+wrong account, changed manifest, stale state, duplicate ambiguity and private flags.
+No existing-profile edits or live test writes. Both independent full-diff reviews,
+resolved findings, green CI and separate human Approve precede merge. Image build,
+reviewed private-code sync and digest pin require their own release step. Workflow
+execution remains disabled until that release, and only the human triggers it.
