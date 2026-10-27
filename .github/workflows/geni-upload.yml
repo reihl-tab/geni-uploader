@@ -154,13 +154,13 @@ jobs:
               -e GITHUB_STEP_SUMMARY=/run/job-summary \
               "$IMAGE" /opt/plan_report.py /run/plan-report/report.json || {
               printf '%s\n' '## Read-only plan summary' '' 'Safe to run: no' \
-                'Summary renderer failed; inspect the protected log.' >> "$GITHUB_STEP_SUMMARY"
+                'Summary renderer failed; inspect the protected log.' >> "$GITHUB_STEP_SUMMARY" || true
             }
           fi
           if { [ "$MODE" = "plan" ] || [ "$MODE" = "details-plan" ]; } &&
              [ "${PLAN_SUMMARY_IMAGE_READY:-no}" != "yes" ]; then
             printf '%s\n' '## Read-only plan summary' '' 'Safe to run: no' \
-              'Summary image not released; inspect the protected log.' >> "$GITHUB_STEP_SUMMARY"
+              'Summary image not released; inspect the protected log.' >> "$GITHUB_STEP_SUMMARY" || true
           fi
           echo "container step done"
 

@@ -269,4 +269,18 @@ def test_no_token_upload_preview_exit_zero_is_not_readiness(tmp_path, monkeypatc
     assert 'Safe to run: no' in r.render(data)
     readme = (Path(__file__).parents[1] / 'README.md').read_text()
     assert 'An upload `plan` without a token can return exit code 0' in readme
-    assert 'Exit code 0\nalone does not prove readiness' in readme
+    assert 'Exit code 0 alone does not prove readiness' in ' '.join(readme.split())
+
+
+@pytest.mark.parametrize('image_ready', ['yes', 'no'])
+def test_unwritable_summary_never_stops_log_preservation(tmp_path, image_ready):
+    import subprocess
+    workflow = (Path(__file__).parents[1] / '.github/workflows/geni-upload.yml').read_text()
+    start = workflow.index('          if { [ "$MODE" = "plan" ]')
+    stop = workflow.index('          echo "container step done"', start)
+    env = dict(os.environ, RUNNER_TEMP=str(tmp_path), GITHUB_STEP_SUMMARY=str(tmp_path / 'ZZmissing/summary'),
+               IMAGE='ZZimage', MODE='plan', PLAN_SUMMARY_IMAGE_READY=image_ready)
+    result = subprocess.run(['bash', '-e', '-c', 'docker() { return 1; }\n' + workflow[start:stop] + '\necho ZZcontinued'],
+                            check=False, env=env, capture_output=True, text=True)
+    assert result.returncode == 0
+    assert 'ZZcontinued' in result.stdout
