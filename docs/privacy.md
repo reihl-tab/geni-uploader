@@ -92,12 +92,18 @@ Do not include personal records or credentials. A private access or deletion
 request should go to the operator or custodian through the private channel
 already agreed with them, not a public issue.
 
-## Static authorization fallback page
+## Client-side token helper page
 
-The project's static callback page does not complete login or collect tokens.
-It does not read, display, store or forward response parameters. With JavaScript
-enabled it removes query and fragment text from the visible address. If a query
-parameter reaches the host, GitHub may already have processed it before this
-page loads; browser history or hosting retention is outside the page's control.
-A URL fragment is processed by the browser, not sent in the HTTP request.
-Do not send OAuth response URLs to anyone or assume this page erases prior data.
+The static callback page reads access_token from the URL fragment locally in
+that browser, displays it in a read-only field and offers a Copy button using
+the system clipboard. It clears the visible response URL after reading the
+fragment. The page does not send the token over the network, use analytics or
+external resources, or save it in cookies or browser storage. The page code is
+public; the token is not published by that code. Using this page does not grant
+token custody to anyone. Paste only into a separately agreed secure vault form,
+never chat, email or a public issue. Close the tab and clear the clipboard after
+use. Clipboard history, sync, extensions, other apps or a screen capture may
+expose a displayed or copied token. Clearing the display does not erase prior
+copies. Browser history and hosting retention remain outside this page's
+control. A URL fragment is not sent in the HTTP request; query parameters can
+reach the host before the page loads. Do not put tokens in query parameters.

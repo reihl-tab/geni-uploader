@@ -7,32 +7,64 @@ layout: null
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-62TX9huj9AEFoczNxKRR/B0IkJ0PBds3I/SA0WBnD7U='; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <script>
-// This is a registration fallback, not a token collection endpoint.
-// Do not read, display, store or transmit any OAuth response parameters.
+'use strict';
+const fields = new URLSearchParams(location.hash.slice(1));
+const token = fields.get('access_token') || '';
 history.replaceState(null, '', location.pathname);
+document.addEventListener('DOMContentLoaded', () => {
+  const output = document.getElementById('token');
+  const copy = document.getElementById('copy');
+  const status = document.getElementById('status');
+  if (!token) {
+    status.textContent = 'No access token was found in the URL fragment. Stop and check the authorization flow.';
+    return;
+  }
+  output.value = token;
+  output.hidden = false;
+  copy.hidden = false;
+  status.textContent = 'Token read locally. The visible URL has been cleared.';
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(output.value);
+      status.textContent = 'Copied. Paste only into your agreed secure vault form, never chat or email. Clear your clipboard afterward.';
+    } catch {
+      status.textContent = 'Automatic copy is unavailable. Select the token and copy it manually into your agreed secure vault form only.';
+      output.focus();
+      output.select();
+    }
+  });
+  document.getElementById('clear').addEventListener('click', () => {
+    output.value = '';
+    output.hidden = true;
+    copy.hidden = true;
+    status.textContent = 'Token display cleared. Close this tab and clear your clipboard. Prior copies are not erased.';
+  });
+});
 </script>
-<title>Geni authorization - stop here</title>
+<title>Geni token - local copy</title>
 <style>
-body {font: 18px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 4rem auto; padding: 0 1.5rem; color: #17212b; background: #f8fafc;}
+body {font: 18px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.5rem; color: #17212b; background: #f8fafc;}
 h1 {font-size: 1.7rem; line-height: 1.25;}
 .notice {padding: 1rem 1.25rem; border-left: 4px solid #935b00; background: #fff6e5;}
+textarea {box-sizing: border-box; width: 100%; min-height: 7rem; font: 16px/1.5 monospace; overflow-wrap: anywhere;}
+button {padding: .6rem 1rem; margin: .5rem .5rem .5rem 0; font: inherit; cursor: pointer;}
 </style>
 </head>
 <body>
-<h1>Geni authorization: stop here</h1>
-<p class="notice">This page does not complete a login or collect a token.</p>
-<p>If you arrived here after authorizing an application, stop and return to the
-private setup conversation. Report only that you reached this page. Do not send
-the browser address, an access token, an application secret or a screenshot of
-credentials.</p>
-<p>Any query or fragment is removed from the visible address when JavaScript is
-available. No response parameters are read, displayed, stored or forwarded by
-this page. Your browser or the hosting service may retain prior navigation data;
-this page cannot erase it. Do not retry authorization until the intended flow
-has been checked.</p>
-<noscript><p>JavaScript is off, so this page could not clear the address bar.
-Do not copy the address. Close this tab and report only that setup stopped.</p></noscript>
+<h1>Copy your Geni token locally</h1>
+<p class="notice">This token grants account access. Paste it only into the secure vault form agreed with you. Never paste it into chat, email, a public issue or a screenshot.</p>
+<p id="status" role="status">Reading the URL fragment locally...</p>
+<textarea id="token" aria-label="Sensitive Geni access token" readonly hidden autocomplete="off" spellcheck="false"></textarea>
+<button id="copy" type="button" hidden>Copy token</button>
+<button id="clear" type="button">Clear token display</button>
+<p>This page reads only the URL fragment in your browser, clears the visible
+address, and does not send or store the token. Copy uses your system clipboard,
+which may be available to clipboard history, sync or other apps. Clear it after
+pasting. Close this tab when finished. Clearing the display cannot erase prior
+copies, browser history or hosting logs. Do not authorize again just to test.</p>
+<noscript><p>JavaScript is off. Do not copy the address or send a screenshot.
+Close this tab and ask for setup help without sharing credentials.</p></noscript>
 </body>
 </html>
