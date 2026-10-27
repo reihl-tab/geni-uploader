@@ -149,3 +149,68 @@ def test_photo_rejects_document_only_field(tmp_path):
     item["set"]["labels"] = "ZZ label"
     with pytest.raises(s.api.ApiError):
         s.load_records(manifest(tmp_path, item))
+
+
+
+# --- effective runtime allowlist ------------------------------------------
+
+RUNTIME_PROBE = """
+import json, sys
+sys.path[:0] = [sys.argv[1], sys.argv[2]]
+def _hook(event, args):
+    if event.startswith("socket.") or event in {"urllib.Request", "subprocess.Popen"}:
+        raise RuntimeError("BLOCKED:" + event)
+sys.addaudithook(_hook)
+import geni_upload, source_details
+def _no_network(*args, **kwargs):
+    raise AssertionError("execute must not run in the allowlist probe")
+geni_upload.execute = _no_network
+seen = []
+def _stop(items, token):
+    seen.append(sorted(geni_upload.ALLOWLIST))
+    raise SystemExit(0)
+source_details.checked_plan = _stop
+sys.argv = ["source_details", "plan", "--manifest", sys.argv[3]]
+try:
+    source_details.main()
+except SystemExit:
+    pass
+print(json.dumps(seen[0] if seen else None))
+"""
+
+
+def effective_allowlist(tmp_path, source_dir=ROOT):
+    """The ALLOWLIST as source_details.main() leaves it, just before plan work."""
+    manifest_path = tmp_path / "items.json"
+    manifest_path.write_text(json.dumps({"schema_version": 1, "items": [item_for("photo")]}))
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", RUNTIME_PROBE, str(source_dir), str(ROOT),
+         str(manifest_path)],
+        capture_output=True, text=True, timeout=60, env={"PATH": "/usr/bin:/bin"},
+        check=True, cwd=tmp_path,
+    ).stdout
+    value = json.loads(out.strip().splitlines()[-1])
+    assert value is not None, "main() never reached the plan stage"
+    return {tuple(pair) for pair in value}
+
+
+def test_effective_runtime_allowlist_of_source_details_main(tmp_path):
+    assert effective_allowlist(tmp_path) == BASE_ALLOWLIST | SOURCE_DETAILS_WIDENING
+
+
+@pytest.mark.parametrize("mutation", [
+    "api.ALLOWLIST |= {('POST', 'photo_delete')}",
+    "api.ALLOWLIST.add(('POST', 'photo_delete'))",
+    "setattr(api, 'ALLOWLIST', api.ALLOWLIST | {('POST', 'photo_delete')})",
+])
+def test_runtime_snapshot_catches_planted_widening(tmp_path, mutation):
+    source = (ROOT / "source_details.py").read_text(encoding="utf-8")
+    anchor = '("POST", "document_update"), ("POST", "photo_update")})\n'
+    assert source.count(anchor) == 1
+    mutated = tmp_path / "mutated"
+    mutated.mkdir()
+    (mutated / "source_details.py").write_text(
+        source.replace(anchor, anchor + "        " + mutation + "\n"), encoding="utf-8")
+    effective = effective_allowlist(tmp_path, mutated)
+    assert ("POST", "photo_delete") in effective
+    assert effective != BASE_ALLOWLIST | SOURCE_DETAILS_WIDENING
