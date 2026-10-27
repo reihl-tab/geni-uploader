@@ -8,10 +8,19 @@ Two independent guards:
    exec and spawn events.
 
 Each guard has a self-test with planted violations, so a guard that silently
-stops working fails here too. Synthetic inputs only; nothing touches the network.
+stops working fails here too. Blocked runtime events are recorded even when
+package code catches the RuntimeError, and the import test requires that list
+to be empty. Synthetic inputs only; nothing touches the network.
+
+Scope: this is a network/subprocess tripwire, not a sandbox and not file-access
+confinement. mmap and other file access are out of scope here; descriptor-based
+path confinement (docs/API-CLIENT-DESIGN.md section 2.4) is owned by its own
+later review.
 """
 import ast
+import json
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -26,6 +35,7 @@ FORBIDDEN_MODULES = frozenset({
     "socket", "ssl", "http", "urllib", "requests", "httpx", "aiohttp", "asyncio",
     "socketserver", "ftplib", "smtplib", "poplib", "imaplib", "telnetlib", "xmlrpc",
     "webbrowser", "subprocess", "multiprocessing", "pty", "ctypes", "importlib",
+    "select", "selectors",
     "geni_upload", "source_details",
 })
 FORBIDDEN_CALLS = frozenset({"__import__", "exec", "eval", "compile"})
@@ -38,27 +48,42 @@ FORBIDDEN_OS_ATTRS = frozenset({
 
 
 def violations(source, filename="<planted>"):
-    """Return a sorted list of 'line:reason' strings for forbidden constructs."""
+    """Return a sorted list of 'line:reason' strings for forbidden constructs.
+
+    Names bound to the os module (``import os``, ``import os as x``) are
+    tracked, so aliased ``x.system`` and ``getattr(x, ...)`` are caught.
+    """
+    tree = ast.parse(source, filename)
+    os_names = {"os"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "os":
+                    os_names.add(alias.asname or "os")
     found = []
-    for node in ast.walk(ast.parse(source, filename)):
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name.split(".")[0] in FORBIDDEN_MODULES:
                     found.append(f"{node.lineno}:import {alias.name}")
         elif isinstance(node, ast.ImportFrom):
-            if node.level == 0 and (node.module or "").split(".")[0] in FORBIDDEN_MODULES:
-                found.append(f"{node.lineno}:from {node.module}")
+            module = node.module or ""
+            if node.level == 0 and module.split(".")[0] in FORBIDDEN_MODULES:
+                found.append(f"{node.lineno}:from {module}")
+            if node.level == 0 and module == "os":
+                for alias in node.names:
+                    if alias.name in FORBIDDEN_OS_ATTRS or alias.name == "*":
+                        found.append(f"{node.lineno}:from os import {alias.name}")
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name) and func.id in FORBIDDEN_CALLS:
                 found.append(f"{node.lineno}:call {func.id}")
+            if (isinstance(func, ast.Name) and func.id == "getattr" and node.args
+                    and isinstance(node.args[0], ast.Name) and node.args[0].id in os_names):
+                found.append(f"{node.lineno}:getattr os")
         if (isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_OS_ATTRS
-                and isinstance(node.value, ast.Name) and node.value.id == "os"):
+                and isinstance(node.value, ast.Name) and node.value.id in os_names):
             found.append(f"{node.lineno}:os.{node.attr}")
-        if isinstance(node, ast.ImportFrom) and node.module == "os":
-            for alias in node.names:
-                if alias.name in FORBIDDEN_OS_ATTRS:
-                    found.append(f"{node.lineno}:from os import {alias.name}")
     return sorted(found)
 
 
@@ -98,6 +123,11 @@ def test_package_contains_no_native_or_symlinked_code():
     ("import os\nos.system('true')", "2:os.system"),
     ("import os\nos.posix_spawn", "2:os.posix_spawn"),
     ("from os import popen", "1:from os import popen"),
+    ("from os import *", "1:from os import *"),
+    ("import os as operating\noperating.system('x')", "2:os.system"),
+    ("import os as o\ngetattr(o, 'sys' + 'tem')", "2:getattr os"),
+    ("import select", "1:import select"),
+    ("from selectors import DefaultSelector", "1:from selectors"),
 ])
 def test_static_guard_flags_planted_violation(source, expected):
     assert expected in violations(source)
@@ -124,25 +154,28 @@ HOOK = textwrap.dedent("""
         "os.spawn", "os.fork", "os.forkpty", "ctypes.dlopen",
         "ftplib.connect", "smtplib.connect", "webbrowser.open",
     }
+    RECORDED = []
     def _hook(event, args):
         if event in BLOCKED or event.startswith("socket."):
+            RECORDED.append(event)  # recorded even if the caller swallows the error
             raise RuntimeError("BLOCKED:" + event)
     sys.addaudithook(_hook)
 """)
 
 IMPORT_PACKAGE = textwrap.dedent("""
+    import json
     sys.path.insert(0, ROOT)
     import pkgutil
     import geni_offline
     names = [m.name for m in pkgutil.walk_packages(geni_offline.__path__, "geni_offline.")]
     for name in names:
         __import__(name)
-    print("imported", 1 + len(names))
+    print(json.dumps({"imported": 1 + len(names), "blocked": RECORDED}))
 """)
 
 
-def run_guarded(payload):
-    code = f"ROOT = {str(ROOT)!r}\n" + HOOK + payload
+def run_guarded(payload, root=ROOT):
+    code = f"ROOT = {str(root)!r}\n" + HOOK + payload
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONDONTWRITEBYTECODE": "1"}
     return subprocess.run(
         [sys.executable, "-I", "-c", code],
@@ -150,11 +183,38 @@ def run_guarded(payload):
     )
 
 
-def test_every_package_module_imports_under_the_network_hook():
-    result = run_guarded(IMPORT_PACKAGE)
+def import_report(root=ROOT):
+    result = run_guarded(IMPORT_PACKAGE, root)
     assert result.returncode == 0, result.stderr
-    assert "BLOCKED:" not in result.stderr
-    assert result.stdout.startswith("imported ")
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def test_every_package_module_imports_under_the_network_hook():
+    report = import_report()
+    assert report["imported"] >= 1
+    assert report["blocked"] == []
+
+
+SWALLOWED = (
+    "import os as operating\n"
+    "try:\n"
+    "    operating.system({command!r})\n"
+    "except RuntimeError:\n"
+    "    pass\n"
+)
+
+
+def test_combined_guards_catch_a_planted_module_that_swallows_the_block(tmp_path):
+    planted_pkg = tmp_path / "geni_offline"
+    shutil.copytree(PACKAGE, planted_pkg)
+    marker = tmp_path / "synthetic-side-effect"
+    planted = SWALLOWED.format(command=f"touch {marker}")
+    (planted_pkg / "_planted.py").write_text(planted, encoding="utf-8")
+    assert violations(planted) == ["3:os.system"]
+    assert [p.name for p in planted_pkg.glob("*.py")].count("_planted.py") == 1
+    report = import_report(tmp_path)
+    assert report["blocked"] == ["os.system"]
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize("payload, event", [
