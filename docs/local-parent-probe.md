@@ -86,3 +86,14 @@ choose a new path for a separately authorized retry. Do not retry a429 automatic
 
 No concrete OAuth URL or live command with real values is a release deliverable
 until the separate reviewed connection route and canonical-ID setup are ready.
+
+### Typed evidence leaves
+
+Private output is extracted through bounded typed leaves, not a shallow copy:
+name fields are bounded text, locale maps have exact name-field keys, privacy and
+life/merge flags are explicit booleans when present, and relationship arrays hold
+only canonical IDs of the appropriate type with no duplicates. Nested objects,
+URLs or extra name-map fields are rejected. Absent privacy remains absent, never
+false. HTTP protocol failures are mapped to fixed messages without tracebacks or
+provider content. These checks minimize structure leakage but cannot determine
+whether a provider's otherwise valid name string contains incorrect personal data.

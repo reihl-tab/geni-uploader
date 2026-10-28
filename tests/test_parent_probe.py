@@ -172,3 +172,78 @@ def test_recipient_not_a_command_or_key(monkeypatch):
     def deny(*args, **kwargs): raise AssertionError('no subprocess')
     monkeypatch.setattr(p.subprocess, 'run', deny)
     with pytest.raises(Blocked): p.encrypt('ZZ; command', b'ZZprivate')
+
+
+@pytest.mark.parametrize('field,bad', [
+    ('names', {'en': {'email': 'ZZsentinel'}}),
+    ('names', {'en': {'first_name': {'access_token': 'ZZsentinel'}}}),
+    ('names', {'en': {'first_name': ['ZZsentinel']}}),
+    ('names', {'EN': {'first_name': 'ZZsentinel'}}),
+    ('unions', [{'access_token': 'ZZsentinel'}]),
+    ('unions', ['https://ZZsentinel.invalid']),
+    ('public', 'ZZsentinel'), ('is_alive', 0), ('merge_pending', None),
+    ('guid', {'email': 'ZZsentinel'}),
+    ('first_name', ['ZZsentinel'])])
+def test_profile_nested_leaf_schema_rejects_malformed(field, bad):
+    client = Client()
+    # Family node is checked even if the two identity responses are valid.
+    family = copy.deepcopy(FAMILY)
+    family['nodes']['profile-99123'][field] = bad
+    client.responses[C['owner_node']+'/immediate-family'] = family
+    with pytest.raises(Blocked) as error: p.collect(C, client)
+    assert 'ZZsentinel' not in str(error.value)
+
+
+@pytest.mark.parametrize('field', ['partners', 'children', 'adopted_children', 'foster_children'])
+@pytest.mark.parametrize('bad', [[{'access_token': 'ZZsentinel'}], 'ZZsentinel',
+                                ['profile-1']*101, ['profile-1', 'profile-1']])
+def test_union_relationship_container_rejects_malformed(field, bad):
+    client = Client()
+    client.responses['union-99111'] = {**UNION, field: bad}
+    with pytest.raises(Blocked) as error: p.collect(C, client)
+    assert 'ZZsentinel' not in str(error.value)
+
+
+@pytest.mark.parametrize('error_type', ['BadStatusLine', 'IncompleteRead'])
+def test_http_protocol_failure_main_no_traceback_or_sentinel(tmp_path, monkeypatch, capsys, error_type):
+    import http.client
+    config = tmp_path/'connection'
+    config.write_text(json.dumps(C)); config.chmod(0o600)
+    token = tmp_path/'token'
+    token.write_text('ZZsentinelToken'); token.chmod(0o600)
+    error = (http.client.BadStatusLine('ZZproviderSentinel') if error_type == 'BadStatusLine'
+             else http.client.IncompleteRead(b'ZZproviderSentinel'))
+    client = p.ReadOnly('ZZsentinelToken')
+    client.opener = Opener(error=error)
+    monkeypatch.setattr(p, 'ReadOnly', lambda token: client)
+    monkeypatch.setattr(p, 'encrypt', lambda recipient, value: b'age-encryption.org/v1\nZZcipher')
+    assert p.main(['--connection-file',str(config),'--token-file',str(token),
+                   '--recipient','age1'+'a'*58,'--output-dir',str(tmp_path/'out'),
+                   '--confirm-read-only','YES']) == 1
+    output = capsys.readouterr()
+    assert 'ZZ' not in output.out + output.err and not output.err
+    assert len(client.opener.requests) == 1
+
+
+def test_valid_bounded_locale_and_edges_preserved_without_extras():
+    client = Client()
+    family = copy.deepcopy(FAMILY)
+    family['nodes']['profile-99123'].update(
+        names={'en': {'first_name': 'ZZRoot'}, 'he': {'first_name': 'ZZHebrew'}},
+        unions=['union-99111'], email={'access_token': 'ZZsentinel'})
+    client.responses[C['owner_node']+'/immediate-family'] = family
+    result = p.collect(C, client)
+    node = result['family']['nodes']['profile-99123']
+    assert node['names']['he']['first_name'] == 'ZZHebrew'
+    assert node['unions'] == ['union-99111'] and 'ZZsentinel' not in str(result)
+
+
+@pytest.mark.parametrize('field,bad', [('names', {f'a{n}': {'first_name': 'ZZ'} for n in range(11)}),
+                                    ('names', {'en': {'first_name': 'ZZ'*81}}),
+                                    ('unions', ['union-1']*101)])
+def test_nested_collection_and_leaf_bounds(field, bad):
+    client = Client()
+    family = copy.deepcopy(FAMILY)
+    family['nodes']['profile-99123'][field] = bad
+    client.responses[C['owner_node']+'/immediate-family'] = family
+    with pytest.raises(Blocked): p.collect(C, client)

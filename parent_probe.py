@@ -1,5 +1,6 @@
 """Human-started local GET-only probe. Never imported by MCP or uploader."""
 import argparse
+import http.client
 import json
 import os
 import re
@@ -90,7 +91,8 @@ class ReadOnly:
                 result = json.loads(raw.decode('utf-8'))
                 require(type(result) is dict and 'error' not in result)
                 return result
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError,
+                http.client.HTTPException) as exc:
             raise Blocked('probe stopped; request or response unavailable') from exc
 
 
@@ -104,12 +106,53 @@ def collect(config, client):
     require(type(family.get('focus')) is dict and family['focus'].get('id') == owner
             and type(family.get('nodes')) is dict and len(family['nodes']) <= 100
             and set(family) <= {'focus', 'nodes'})
-    # Retain only documented identity/name/privacy/edge evidence, no biographies,
-    # addresses, emails, captions or free-form errors. Unknown graph shape stops.
-    allowed = set(FIELDS.split(',')) | {'partners', 'children', 'adopted_children', 'foster_children'}
+    # Extract bounded typed leaves, never copy nested provider objects.
+    def edges(value):
+        require(type(value) is list and len(value) <= 100)
+        require(all(type(v) is str and re.fullmatch(
+            r'(?:profile|union)-[0-9]{1,30}', v) for v in value))
+        require(len(set(value)) == len(value))
+        return list(value)
+
     def minimal(value):
         require(type(value) is dict)
-        return {k: v for k, v in value.items() if k in allowed}
+        result = {}
+        if 'id' in value:
+            require(type(value['id']) is str and re.fullmatch(
+                r'(?:profile|union)-[0-9]{1,30}', value['id']))
+            result['id'] = value['id']
+        if 'guid' in value:
+            require(type(value['guid']) is str and re.fullmatch(r'[0-9]{1,30}', value['guid']))
+            result['guid'] = value['guid']
+        for key in ('public', 'is_alive', 'merge_pending'):
+            if key in value:
+                require(type(value[key]) is bool)
+                result[key] = value[key]
+        if 'merged_into' in value:
+            require(value['merged_into'] is None)
+            result['merged_into'] = None
+        name_fields = {'first_name', 'middle_name', 'last_name', 'maiden_name'}
+        for key in name_fields:
+            if key in value:
+                text(value[key])
+                result[key] = value[key]
+        if 'names' in value:
+            names = value['names']
+            require(type(names) is dict and len(names) <= 10)
+            result['names'] = {}
+            for locale, fields in names.items():
+                require(type(locale) is str and re.fullmatch(r'[a-z]{2}', locale)
+                        and type(fields) is dict and 1 <= len(fields) <= 4
+                        and set(fields) <= name_fields)
+                for leaf in fields.values():
+                    text(leaf)
+                result['names'][locale] = dict(fields)
+        for key in ('unions', 'partners', 'children', 'adopted_children', 'foster_children'):
+            if key in value:
+                result[key] = edges(value[key])
+                kind = 'union-' if key == 'unions' else 'profile-'
+                require(all(v.startswith(kind) for v in result[key]))
+        return result
     nodes = {}
     union_ids = set()
     for key, value in family['nodes'].items():
@@ -168,7 +211,8 @@ def main(argv=None):
             os.fsync(stream.fileno())
         print('parent-probe complete; encrypted evidence saved; creation disabled')
         return 0
-    except (Blocked, OSError, ValueError, subprocess.SubprocessError):
+    except (Blocked, OSError, ValueError, subprocess.SubprocessError,
+            http.client.HTTPException):
         print('parent-probe blocked; inspect local configuration or request human review')
         return 1
 
