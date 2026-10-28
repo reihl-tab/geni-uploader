@@ -60,7 +60,9 @@ test('duplicate signed claims/header and signature tampering rejected', async ()
   const duplicatePayload = raw.slice(0, -1) + ',"run_attempt":"1"}';
   const duplicateHeader = head.slice(0, -1) + ',"alg":"RS256"}';
   for (const token of [manual(head, duplicatePayload), manual(duplicateHeader, raw),
-    manual(head, raw).replace(/.$/, 'Z')]) {
+    (() => { const parts = manual(head, raw).split('.');
+      parts[2] = (parts[2][0] === 'A' ? 'B' : 'A') + parts[2].slice(1);
+      return parts.join('.'); })()]) {
     await assert.rejects(verify(token, publicKey, pins, now));
   }
 });
@@ -80,4 +82,15 @@ test('each time claim missing and noninteger rejects', async () => {
     body[field] = now - 0.5;
     await assert.rejects(verify(await sign(body), publicKey, pins, now));
   }
+});
+
+
+test('noncanonical signature padding bits rejected even with identical decoded bytes', async () => {
+  const token = await sign(); const parts = token.split('.');
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  const last = alphabet.indexOf(parts[2].at(-1));
+  assert.equal(last % 16, 0); // RS256 2048-bit key yields 256 bytes.
+  parts[2] = parts[2].slice(0, -1) + alphabet[last + 1];
+  assert.deepEqual(Buffer.from(parts[2], 'base64url'), Buffer.from(token.split('.')[2], 'base64url'));
+  await assert.rejects(verify(parts.join('.'), publicKey, pins, now));
 });

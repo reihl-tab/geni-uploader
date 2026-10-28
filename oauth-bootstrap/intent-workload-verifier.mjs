@@ -38,6 +38,8 @@ export async function verifyOfflineWorkload(token, publicKey, pins, now) {
     check(Number.isSafeInteger(now) && now > 0);
     check(publicKey?.type === 'public' && typeof token === 'string' && token.length <= 16384);
     const parts = token.split('.'); check(parts.length === 3);
+    check(/^[A-Za-z0-9_-]+$/.test(parts[2]) &&
+      Buffer.from(parts[2], 'base64url').toString('base64url') === parts[2]);
     const header = segment(parts[0]); exact(header, ['alg', 'kid', 'typ']);
     check(header.alg === 'RS256' && header.typ === 'JWT' && header.kid === pins.kid);
     const decoded = segment(parts[1]); exact(decoded, [...PIN_CLAIMS, 'iat', 'nbf', 'exp', 'jti']);
