@@ -129,3 +129,51 @@ def test_duplicate_evidence_and_invalid_phase_shapes():
     first = consume(binding(), 0)
     with pytest.raises(Blocked):
         advance(first, 1, [], 'a'*64)
+
+
+@pytest.mark.parametrize('shape', ['consumed', 'acknowledged', 'uncertain_unknown',
+                                   'uncertain_known', 'verified_direct',
+                                   'verified_reconciled_unknown', 'verified_reconciled_known'])
+@pytest.mark.parametrize('event', ['acknowledge', 'uncertain', 'verify',
+                                   'reconcile_verified', 'reset', 'release', 'retry'])
+def test_complete_phase_event_matrix(shape, event):
+    consumed = consume(binding(), 0)
+    ack = advance(consumed, 1, 'acknowledge', 'a'*64, 'profile-999002')
+    unknown = advance(consumed, 1, 'uncertain', 'a'*64)
+    known = advance(ack, 2, 'uncertain', 'b'*64)
+    states = {
+        'consumed': consumed,
+        'acknowledged': ack,
+        'uncertain_unknown': unknown,
+        'uncertain_known': known,
+        'verified_direct': advance(ack, 2, 'verify', 'b'*64),
+        'verified_reconciled_unknown': advance(unknown, 2, 'reconcile_verified',
+                                               'b'*64, 'profile-999002'),
+        'verified_reconciled_known': advance(known, 3, 'reconcile_verified',
+                                             'c'*64, 'profile-999002'),
+    }
+    # This independent literal matrix must not derive expectations from the
+    # production transition table; otherwise a weakened table mutates both.
+    accepted = {
+        'consumed': {'acknowledge': 'acknowledged', 'uncertain': 'uncertain'},
+        'acknowledged': {'uncertain': 'uncertain', 'verify': 'verified'},
+        'uncertain_unknown': {'reconcile_verified': 'verified'},
+        'uncertain_known': {'reconcile_verified': 'verified'},
+        'verified_direct': {},
+        'verified_reconciled_unknown': {},
+        'verified_reconciled_known': {},
+    }
+    state = states[shape]
+    before = deepcopy(state)
+    ident = 'profile-999002' if event in ('acknowledge', 'reconcile_verified') else None
+    if event in accepted[shape]:
+        result = advance(state, state['version'], event, 'd'*64, ident)
+        assert result['phase'] == accepted[shape][event]
+        assert result['version'] == state['version'] + 1
+        assert result['binding'] == state['binding']
+        assert result['created_id'] == (ident or state['created_id'])
+        assert result['evidence_refs'] == state['evidence_refs'] + ['d'*64]
+    else:
+        with pytest.raises(Blocked):
+            advance(state, state['version'], event, 'd'*64, ident)
+    assert state == before
