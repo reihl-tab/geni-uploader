@@ -66,23 +66,48 @@ def test_cli_nested_json_fixed_failure(tmp_path, capsys):
     assert capsys.readouterr().out == 'parent-plan blocked; review protected inputs\n'
 
 
-@pytest.mark.parametrize('name', ['fork', 'forkpty', 'posix_spawn', 'posix_spawnp',
-                                  'startfile', 'popen', 'system', 'execv', 'execve', 'execl', 'spawnv', 'spawnl'])
+OS_HELPERS = sorted({name for name in dir(os)
+                     if name in ('system', 'popen', 'startfile') or name.startswith(
+                         ('exec', 'spawn', 'fork', 'posix_spawn'))} | {'startfile'})
+NETWORK_HELPERS = [(socket, 'socket'), (urllib.request, 'urlopen'),
+                   (urllib.request.OpenerDirector, 'open'),
+                   (http.client.HTTPConnection, 'request')]
+
+
+@pytest.mark.parametrize('name', OS_HELPERS)
 def test_each_process_guard_is_exercised_without_real_process(name, monkeypatch, request):
-    # Install harmless sentinel even on platforms missing the API. If the guard
-    # omits a helper, the sentinel returns rather than launching any process.
+    # Every platform helper gets a harmless sentinel before installing the guard.
     monkeypatch.setattr(os, name, lambda *a, **k: 'ZZ-unguarded', raising=False)
     request.getfixturevalue('offline_guard')
     with pytest.raises(pytest.fail.Exception, match='offline operation attempted'):
         getattr(os, name)('ZZ-synthetic')
 
 
-@pytest.mark.parametrize('name', ['run', 'Popen'])
-def test_subprocess_guards_exercised(name, monkeypatch, request):
-    monkeypatch.setattr(subprocess, name, lambda *a, **k: 'ZZ-unguarded')
+@pytest.mark.parametrize('target,name', NETWORK_HELPERS + [(subprocess, 'run'), (subprocess, 'Popen')])
+def test_all_network_and_subprocess_guards_exercised(target, name, monkeypatch, request):
+    monkeypatch.setattr(target, name, lambda *a, **k: 'ZZ-unguarded')
     request.getfixturevalue('offline_guard')
     with pytest.raises(pytest.fail.Exception, match='offline operation attempted'):
-        getattr(subprocess, name)('ZZ-synthetic')
+        getattr(target, name)('ZZ-synthetic')
+
+
+def test_guarded_set_equals_every_discovered_helper(monkeypatch, request):
+    installed = set()
+    original = monkeypatch.setattr
+
+    def record(target, name, value, *args, **kwargs):
+        installed.add((target, name))
+        return original(target, name, value, *args, **kwargs)
+
+    original(monkeypatch, 'setattr', record)
+    # startfile is not present on POSIX; add safely before deriving expectations.
+    original(os, 'startfile', lambda *a, **k: None, raising=False)
+    expected_os = {name for name in dir(os)
+                   if name in ('system', 'popen', 'startfile') or name.startswith(
+                       ('exec', 'spawn', 'fork', 'posix_spawn'))}
+    request.getfixturevalue('offline_guard')
+    assert installed == {(os, name) for name in expected_os} | set(NETWORK_HELPERS) | {
+        (subprocess, 'run'), (subprocess, 'Popen')}
 
 
 def test_exact_hash_depth_boundary_32_allowed_33_blocked():
