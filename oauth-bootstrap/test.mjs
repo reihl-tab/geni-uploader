@@ -919,3 +919,46 @@ test('missing merge flag still rejects pinned credential storage before writer',
  const e={...setup(),PRIMARY_OWNER_NODE:'profile-99123',SECONDARY_OWNER_NODE:'profile-99555'},b=await beginConnection(e,'secondary');let calls=0;
  const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:async u=>{calls++;if(u.includes('request_token'))return Response.json({access_token:'ZZACCESS',refresh_token:'ZZREFRESH',expires_in:600});assert.equal(u,'https://www.geni.com/api/profile?fields=id,merge_pending,merged_into');return Response.json({id:'profile-99555'});}});assert.equal(r.status,400);assert.equal(calls,2);
 });
+const custodyEnv = () => ({...setup(),PRIMARY_OWNER_NODE:'profile-99000',SECONDARY_OWNER_NODE:'profile-99123',SECONDARY_ALLOW_UNKNOWN_MERGE:'true'});
+async function custodyCallback(e, owner, destination='secondary', failWrite=0) {
+ await sodium.ready;const key=sodium.crypto_box_keypair(),b=destination==='primary'?await begin(e):await beginConnection(e,destination),writes=[],calls=[];
+ const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:async(u,o)=>{
+ calls.push(u);assert.equal(o.redirect,'manual');
+ if(u.endsWith('request_token'))return Response.json({access_token:'ZZACCESS',refresh_token:'ZZREFRESH',expires_in:600});
+ if(u.startsWith('https://www.geni.com/api/profile?')){assert.equal(o.headers.Authorization,'Bearer ZZACCESS');return Response.json(owner);}
+ if(u.endsWith('/public-key'))return Response.json({key:sodium.to_base64(key.publicKey,sodium.base64_variants.ORIGINAL),key_id:'ZZKEY'});
+ assert.equal(o.method,'PUT');const body=JSON.parse(o.body);const raw=sodium.crypto_box_seal_open(sodium.from_base64(body.encrypted_value,sodium.base64_variants.ORIGINAL),key.publicKey,key.privateKey);writes.push({name:u.split('/').at(-1),value:new TextDecoder().decode(raw)});
+ return new Response(null,{status:writes.length===failWrite?500:204});
+ }});return {r,writes,calls};
+}
+test('opted-in exact secondary unknown custody preserves attestation in pending and finalized encrypted bundles',async()=>{
+ const {r,writes}=await custodyCallback(custodyEnv(),{id:'profile-99123'});assert.equal(r.status,303);
+ assert.deepEqual(writes.map(x=>x.name),['GENI_SECONDARY_OAUTH_REFRESH_BUNDLE','GENI_SECONDARY_ACCESS_TOKEN','GENI_SECONDARY_OAUTH_REFRESH_BUNDLE']);
+ const pending=JSON.parse(writes[0].value),final=JSON.parse(writes[2].value);assert.deepEqual(pending.owner_attestation,final.owner_attestation);const a=final.owner_attestation;
+ assert.deepEqual(Object.keys(a).sort(),['credential_storage_only','merge_status','observed_at','owner_node','policy_version','upload_ready']);assert.equal(a.owner_node,'profile-99123');assert.equal(a.merge_status,'unknown');assert.equal(a.credential_storage_only,true);assert.equal(a.upload_ready,false);assert.equal(a.policy_version,'pinned-secondary-custody-v1');assert.ok(Number.isFinite(Date.parse(a.observed_at)));assert.equal(pending.pending_access_token,'ZZACCESS');assert.ok(!Object.hasOwn(final,'pending_access_token'));
+});
+test('secondary explicit false custody is marked as observed, never readiness',async()=>{
+ const {r,writes}=await custodyCallback(custodyEnv(),{id:'profile-99123',merge_pending:false});assert.equal(r.status,303);const a=JSON.parse(writes[2].value).owner_attestation;assert.equal(a.merge_status,'explicit_false');assert.equal(a.upload_ready,false);
+});
+for(const owner of [{id:'profile-99555'},{id:'profile-99123',merge_pending:null},{id:'profile-99123',merge_pending:true},{id:'profile-99123',merge_pending:'false'},{id:'profile-99123',merge_pending:0},{id:'profile-99123',merged_into:null},{id:'profile-99123',merged_into:''},{id:'profile-99123',merged_into:'profile-99555'},{id:'profile-99123',results:[]}])test('secondary unknown opt-in still rejects invalid owner evidence '+JSON.stringify(owner),async()=>{
+ const {r,writes,calls}=await custodyCallback(custodyEnv(),owner);assert.equal(r.status,400);assert.equal(writes.length,0);assert.equal(calls.length,2);
+});
+test('unknown custody requires explicit opt-in and is never applied to primary or tertiary',async()=>{
+ const e=custodyEnv();delete e.SECONDARY_ALLOW_UNKNOWN_MERGE;const strict=await custodyCallback(e,{id:'profile-99123'});assert.equal(strict.r.status,400);assert.equal(strict.writes.length,0);
+ for(const destination of ['primary','tertiary']){const result=await custodyCallback({...custodyEnv(),TERTIARY_OWNER_NODE:'profile-99124'},{id:destination==='primary'?'profile-99000':'profile-99124'},destination);assert.equal(result.r.status,400);assert.equal(result.writes.length,0);}
+});
+test('primary strict success retains existing bundle schema without secondary attestation',async()=>{
+ const {r,writes}=await custodyCallback(custodyEnv(),{id:'profile-99000',merge_pending:false},'primary');assert.equal(r.status,303);assert.ok(writes.every(x=>!x.name.includes('SECONDARY')));assert.ok(!Object.hasOwn(JSON.parse(writes[2].value),'owner_attestation'));
+});
+for(const n of [1,2,3])test('secondary custody partial write stops, attestation remains in attempted bundles '+n,async()=>{
+ const {r,writes}=await custodyCallback(custodyEnv(),{id:'profile-99123'},'secondary',n);assert.equal(r.status,400);assert.equal(writes.length,n);assert.equal(JSON.parse(writes[0].value).owner_attestation.merge_status,'unknown');
+});
+test('custody opt-in rejects invalid configuration and discovery mode',async()=>{
+ for(const e of [{...custodyEnv(),SECONDARY_ALLOW_UNKNOWN_MERGE:'false'},{...custodyEnv(),SECONDARY_OWNER_NODE:undefined},{...custodyEnv(),DISCOVERY_ONLY:'true'}]){const r=await handle(request('/'),e,{fetcher:nofetch});assert.equal(r.status,400);}
+});
+test('secondary-only rollout hides and rejects primary and tertiary including in-flight state',async()=>{
+ const e={...custodyEnv(),SECONDARY_ONLY:'true'};const landing=await handle(request('/',{headers:{Cookie:await session()}}),e,{fetcher:nofetch});const text=await landing.text();assert.match(text,/Primary connection is disabled/);assert.doesNotMatch(text,/Connect primary|Connect tertiary/);
+ for(const path of ['/start','/connections/tertiary/start']){const r=await handle(request(path,{method:'POST',headers:{Origin:origin,Cookie:await session()}}),e,{fetcher:nofetch});assert.equal(r.status,400);}
+ const old=custodyEnv(),b=await begin(old);const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),{...old,SECONDARY_ONLY:'true'},{fetcher:nofetch});assert.equal(r.status,400);
+ const result=await custodyCallback(e,{id:'profile-99123'});assert.equal(result.r.status,303);assert.ok(result.writes.every(w=>w.name.startsWith('GENI_SECONDARY_')));
+});
