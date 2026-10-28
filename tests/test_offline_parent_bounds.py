@@ -43,7 +43,8 @@ def test_proposal_render_envelope_never_network_or_subprocess(monkeypatch):
                          (http.client.HTTPConnection, 'request')]:
         monkeypatch.setattr(target, name, deny)
     for name in dir(os):
-        if name in ('system', 'popen') or name.startswith(('exec', 'spawn')):
+        if name in ('system', 'popen', 'startfile') or name.startswith(
+                ('exec', 'spawn', 'fork', 'posix_spawn')):
             monkeypatch.setattr(os, name, deny)
     plan, value = fixture()  # also constructs and validates a proposal
     assert '<html' in parent_plan.render(plan)
