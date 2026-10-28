@@ -120,8 +120,8 @@ def test_duplicate_evidence_and_invalid_phase_shapes():
     ack = advance(consume(binding(), 0), 1, 'acknowledge', 'a'*64, 'profile-999002')
     with pytest.raises(Blocked):
         advance(ack, 2, 'verify', 'a'*64)
-    for changes in [dict(phase=[]), dict(version=3), dict(created_id=None),
-                    dict(evidence_refs=[]), dict(evidence_refs=['a'*64, 'a'*64])]:
+    for changes in [{'phase': []}, {'version': 3}, {'created_id': None},
+                    {'evidence_refs': []}, {'evidence_refs': ['a'*64, 'a'*64]}]:
         value = deepcopy(ack)
         value.update(changes)
         with pytest.raises(Blocked):
