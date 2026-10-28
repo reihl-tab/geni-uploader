@@ -112,3 +112,32 @@ test('changed stored schema and preexisting history slot reject atomically', asy
   await assert.rejects(c.advance(bind(), 1, 'uncertain', H('a')));
   assert.deepEqual(store.rows, before);
 });
+for (const key of ['owner', 'connection', 'plan', 'payload', 'artifact', 'policy']) {
+  test(`immutable binding rejects changed ${key} before state/history mutation`, async () => {
+    const [store, c] = setup(); await c.consume(bind(), 0);
+    const before = structuredClone(store.rows); const changed = bind();
+    changed[key] = key === 'owner' ? 'profile-999003' : key === 'connection' ? 'ZZ-other' : H('f');
+    await assert.rejects(c.advance(changed, 1, 'uncertain', H('a')));
+    assert.deepEqual(store.rows, before);
+  });
+}
+test('two concurrent same-version advances yield exactly one atomic winner', async () => {
+  const [store, c] = setup(); await c.consume(bind(), 0);
+  const results = await Promise.allSettled([
+    c.advance(bind(), 1, 'acknowledge', H('a'), 'profile-999002'),
+    new Candidate(store, bind().owner).advance(bind(), 1, 'uncertain', H('b')),
+  ]);
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal(results.filter(r => r.status === 'rejected').length, 1);
+  const winner = results.find(r => r.status === 'fulfilled').value;
+  assert.equal(winner.version, 2); assert.equal(store.rows.size, 3);
+  assert.deepEqual(store.rows.get('intent'), winner);
+  assert.deepEqual(store.rows.get('event:2'), winner);
+  assert.equal(store.rows.get('event:1').phase, 'consumed');
+});
+test('occupied first history slot without intent blocks consume without overwrite', async () => {
+  const [store, c] = setup(); store.rows.set('event:1', { ZZ: 'preserve-history' });
+  const before = structuredClone(store.rows);
+  await assert.rejects(c.consume(bind(), 0));
+  assert.deepEqual(store.rows, before);
+});

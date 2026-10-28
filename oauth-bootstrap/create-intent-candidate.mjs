@@ -42,6 +42,7 @@ export class OfflineCreateIntentCandidate {
     check(b.owner === this.owner && expectedVersion === 0);
     return this.storage.transaction(async tx => {
       const prior = await tx.get('intent'); check(prior === undefined);
+      check(await tx.get('event:1') === undefined);
       const s = { binding: b, version: 1, phase: 'consumed', created_id: null,
         evidence: [], production_enabled: false };
       validate(s, this.owner);
