@@ -13,6 +13,8 @@ time must claim at most 15 minutes ago, not the future. That is input hygiene,
 not source authentication or proof that current remote state matches the file.
 The configured expected name remains a reviewed configuration field; this
 adapter binds canonical ID only and does not authenticate a name or person.
+Every summary includes the fixed name_checked:false flag; supplying a configured
+name does not change it.
 The existing collector and its strict merge checks remain unchanged.
 
 Only bounded snapshot fields reach the conservative offline parser. Its summary

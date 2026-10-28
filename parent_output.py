@@ -31,7 +31,7 @@ def review_output(value, config, now):
     result = parse({key: value[key] for key in ('self', 'owner', 'family', 'unions')},
                    config['owner_node'])
     return {**result, 'supplied_connection_matches': True,
-            'supplied_time_within_15_minutes': True, 'source_authenticated': False,
+            'supplied_time_within_15_minutes': True, 'source_authenticated': False, 'name_checked': False,
             'live_checks_performed_by_reviewer': False,
             'privacy_create_behavior': 'unknown', 'default_locale_behavior': 'unknown'}
 
