@@ -321,3 +321,20 @@ def test_approval_hash_shape_with_matching_expectation(role, field):
         run(rec, approvers=appr)
     with pytest.raises(Blocked):
         ar.validate(rec)
+
+
+
+def test_validate_returns_isolated_deep_copy_both_directions():
+    """#269: validate() promises a copy; nested values must not be shared."""
+    original = record()
+    snapshot = deepcopy(original)
+    result = ar.validate(original)
+    result['pins']['owner'] = 'profile-999'
+    result['approvals'][0]['approver_ref'] = 'f' * 64
+    result['exclusions'].append('ZZ-extra')
+    assert original == snapshot
+    fresh = ar.validate(original)
+    original['pins']['run_id'] = '42'
+    original['approvals'][1]['evidence_ref'] = 'e' * 64
+    original['exclusions'].clear()
+    assert fresh == snapshot
