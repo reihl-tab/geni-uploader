@@ -118,8 +118,15 @@ def main():
     raw = Path(args.payload).read_bytes()
     if len(raw) > 1000000:
         raise ValueError('oversize visual payload')
-    labels = json.loads(Path(args.labels).read_text()) if args.labels else None
-    Path(args.html).write_text(render(json.loads(raw), labels), encoding='utf-8')
+    try:
+        labels = json.loads(Path(args.labels).read_text()) if args.labels else None
+        if labels is not None and (not isinstance(labels, dict)
+                                   or any(not isinstance(x, dict) for x in labels.values())):
+            raise ValueError('invalid labels')
+        output = render(json.loads(raw), labels)
+    except (ValueError, OSError, TypeError, AttributeError, KeyError):
+        parser.exit(2, 'Private visual input is invalid; review payload and labels.\n')
+    Path(args.html).write_text(output, encoding='utf-8')
     os.chmod(args.html, 0o600)
 
 

@@ -84,3 +84,31 @@ def test_ciphertext_only_workflow_and_no_mail():
     assert 'upload-artifact' not in workflow
     assert 'smtp' not in (root / 'visual_plan.py').read_text().lower()
     assert 'COPY visual_plan.py /opt/visual_plan.py' in (root / 'Dockerfile').read_text()
+
+
+def test_optional_visual_error_preserves_plan_outcome(tmp_path, monkeypatch):
+    path = tmp_path / 'visual.json'
+    monkeypatch.setenv('GENI_VISUAL_PLAN', str(path))
+    with patch.object(g, 'load_manifest', return_value=copy.deepcopy(MANIFEST)), \
+            patch.object(g, 'get_token', return_value='ZZTOKEN'), \
+            patch.object(g, 'verify_profile', return_value=('991234567890', 'ZZFirst ZZLast')), \
+            patch.object(g, 'list_tagged', return_value=[]), \
+            patch.object(v, 'source', side_effect=ValueError('ZZprivate')):
+        assert g.cmd_plan(argparse.Namespace(manifest=str(tmp_path / 'manifest'))) == 0
+    assert json.loads(path.read_text())['complete'] is False
+
+
+@pytest.mark.parametrize('labels', ['{broken', '[]', '{"1": "ZZPrivate"}'])
+def test_malformed_labels_clean_error(tmp_path, monkeypatch, capsys, labels):
+    path = tmp_path / 'payload'
+    path.write_text(json.dumps(v.new()))
+    label = tmp_path / 'labels'
+    label.write_text(labels)
+    output = tmp_path / 'output'
+    monkeypatch.setattr('sys.argv', ['visual_plan', str(path), '--html', str(output),
+                                     '--labels', str(label)])
+    with pytest.raises(SystemExit) as error:
+        v.main()
+    assert error.value.code == 2
+    assert capsys.readouterr().err == 'Private visual input is invalid; review payload and labels.\n'
+    assert not output.exists()

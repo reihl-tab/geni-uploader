@@ -782,6 +782,7 @@ def cmd_plan(args):
 
 
 def _cmd_plan(args, summary, visual):
+    visual_ok = True
     m = load_manifest(args.manifest)
     summary["counts"] = plan_report.upload_counts(m)
     summary["checks"]["schema"] = "pass"
@@ -853,7 +854,10 @@ def _cmd_plan(args, summary, visual):
                         verdict = "SKIP already present in server listing"
                     else:
                         verdict = "NEW absent from server listing; no blocking status"
-                    visual_plan.source(row, kind, verdict.split()[0].lower())
+                    try:
+                        visual_plan.source(row, kind, verdict.split()[0].lower())
+                    except ValueError:
+                        visual_ok = False  # optional visual cannot replace plan outcome
                     print(f"    source {item['title']!r}: schema/file=pass; "
                           f"target=pass; duplicate/status={verdict}")
                     if present and not blocked:
@@ -869,7 +873,7 @@ def _cmd_plan(args, summary, visual):
         return 1
     summary["checks"]["identity"] = "pass"
     summary["complete"] = True
-    visual["complete"] = True
+    visual["complete"] = visual_ok
     print(f"verification: OK - all {total} profile(s) confirmed with Geni")
     ready = all(v in ("pass", "not_required")
                 for v in summary["checks"].values())
