@@ -544,8 +544,11 @@ def upload_payload(item, kind):
 
 def load_state(path):
     if os.path.isfile(path):
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (ValueError, OSError) as exc:
+            raise ApiError("state file cannot be read; manual review required") from exc
     return {"uploaded": []}
 
 
@@ -568,8 +571,11 @@ def load_status(manifest_path, strict=False):
     import yaml
     path = status_path(manifest_path)
     if os.path.isfile(path):
-        with open(path, encoding="utf-8") as f:
-            d = yaml.safe_load(f)
+        try:
+            with open(path, encoding="utf-8") as f:
+                d = yaml.safe_load(f)
+        except (yaml.YAMLError, OSError) as exc:
+            raise ApiError("status file cannot be read; manual review required") from exc
         if isinstance(d, dict) and isinstance(d.get("items"), dict):
             return d
         if strict:
@@ -828,16 +834,16 @@ def _cmd_plan(args, summary):
                                or (key in state.get("uncertain", [])
                                    and rec.get("status") not in
                                    ("not_found", "uploaded", "resolved"))
-                               or rec.get("blocked") or rec.get("create_intent")
-                               and not recorded_done)
+                               or rec.get("blocked") or (rec.get("create_intent")
+                                                          and not recorded_done))
                     if blocked:
                         verdict = "BLOCKED journal/status requires review"
                         summary["checks"]["preconditions"] = "fail"
+                    elif tagged is None:
+                        verdict = "UNKNOWN duplicate/completion unconfirmed; listing unavailable"
                     elif recorded_done and not present:
                         verdict = "BLOCKED recorded done but absent from listing"
                         summary["checks"]["preconditions"] = "fail"
-                    elif tagged is None:
-                        verdict = "UNKNOWN duplicate listing unavailable"
                     elif present:
                         verdict = "SKIP already present in server listing"
                     else:

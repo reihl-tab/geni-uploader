@@ -30,12 +30,13 @@ def test_recorded_name_fallback_keeps_strict_identity_guard():
 @pytest.mark.parametrize('listing,record,ready,verdict', [
     ([], {}, True, 'NEW absent'),
     ([g.anchor(MANIFEST['targets'][0]['documents'][0], 'documents')], {}, True, 'SKIP already present'),
-    (None, {}, False, 'UNKNOWN duplicate'),
+    (None, {}, False, 'UNKNOWN duplicate/completion'),
     ([], {'status': 'uncertain'}, False, 'BLOCKED journal'),
     ([], {'status': 'pending'}, False, 'BLOCKED journal'),
     ([], {'status': 'unexpected'}, False, 'BLOCKED journal'),
     ([], {'create_intent': True}, False, 'BLOCKED journal'),
     ([], {'status': 'uploaded'}, False, 'BLOCKED recorded done'),
+    (None, {'status': 'uploaded'}, False, 'UNKNOWN duplicate/completion'),
     ([g.anchor(MANIFEST['targets'][0]['documents'][0], 'documents')], {'status': 'uploaded'}, True, 'SKIP already present'),
 ])
 def test_each_source_guard_and_value_free_public_report(tmp_path, capsys, listing, record,
@@ -90,4 +91,19 @@ def test_plan_rejects_malformed_status(tmp_path):
             patch.object(g, 'execute') as request, \
             pytest.raises(g.ApiError, match='invalid structure'):
         g.cmd_plan(argparse.Namespace(manifest=str(path)))
+    request.assert_not_called()
+
+
+@pytest.mark.parametrize('kind', ['state', 'status'])
+def test_unreadable_journal_has_clean_review_error(tmp_path, kind):
+    path = tmp_path / 'upload-manifest.yaml'
+    state = tmp_path / 'state.json'
+    if kind == 'state':
+        state.write_text('{broken')
+    else:
+        (tmp_path / g.STATUS_NAME).write_text('items: [broken')
+    with patch.object(g, 'load_manifest', return_value=copy.deepcopy(MANIFEST)), \
+            patch.object(g, 'execute') as request, \
+            pytest.raises(g.ApiError, match='cannot be read; manual review required'):
+        g.cmd_plan(argparse.Namespace(manifest=str(path), state=str(state)))
     request.assert_not_called()
