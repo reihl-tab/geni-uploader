@@ -30,6 +30,27 @@ synthetic bytes only.
   - The result is fixed: `content_consistent: true`, `ciphertext_proved: false`,
     `retention_proved: false`, `authority: false`.
 
+## Caller responsibilities and known limits (#277)
+
+- **Binding.** `check_bytes` and `verify_readback` check only that the
+  descriptor is well-formed and matches the supplied bytes (and, for readback,
+  the exact commit). They do not compare stage, operation binding, run ID or
+  recipient against any expected value: the caller pins those before relying on
+  a result. `account()` compares operation binding, run ID and recipient
+  against the ledger; it does not check stage. No result is authority.
+- **False rejection.** The plaintext screen is a heuristic. Under an explicit
+  model of independent uniformly random bytes (real formats carry fixed
+  headers, so this is a model, not a claim), the single-byte prefixes `{`, `[`
+  and `<` reject about 3/256 (1.17 %) of objects of any size. The other
+  prefixes are negligible (BOM 2^-24, `%PDF` and the ZIP header 2^-32 each,
+  `-----BEGIN` 2^-80). The mostly-printable branch is bounded by the chance
+  that strict UTF-8 decoding succeeds: 9.4e-5 at 16 bytes, 1.0e-8 at 32 bytes
+  and 1.1e-16 at 64 bytes. Passing the screen is never proof of encryption.
+- **Object dedup.** The ledger counts unique stored objects per operation, so
+  the same bytes cannot be accounted twice under different stages. That is
+  intended. Readback verification does not go through the ledger, so an
+  accounted object can still be read back and verified.
+
 ## What it does not prove
 
 It does not prove that the bytes are real ciphertext, that the recipient can
