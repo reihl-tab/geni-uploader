@@ -166,3 +166,23 @@ test("exit during readiness is not reported as ready", async () => {
     await assert.rejects(waitForChrome(f), /exited before readiness/);
   }
 });
+
+
+// #280 (#274): remaining-time probe clamp, bounded so a broken clamp fails promptly.
+async function settlesWithin(promise, ms = 500) {
+  let timer;
+  const guard = new Promise((resolve) => { timer = setTimeout(() => resolve("pending"), ms); });
+  const outcome = await Promise.race([promise.then(() => "resolved", (e) => e), guard]);
+  clearTimeout(timer);
+  return outcome;
+}
+
+test("probe budget follows the remaining time (500 ms timeout) and settles promptly", async () => {
+  const f = fixture();
+  f.timeoutMs = 500;
+  const budgets = [];
+  const probe = f.probe;
+  f.probe = async (port, budget) => { budgets.push(budget); return probe(port, budget); };
+  assert.equal(await settlesWithin(waitForChrome(f)), "resolved");
+  assert.deepEqual(budgets, [500]);
+});
