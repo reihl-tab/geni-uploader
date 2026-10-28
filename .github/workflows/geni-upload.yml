@@ -41,9 +41,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      IMAGE: ghcr.io/reihlinstinct/geni-uploader@sha256:d1b1cbbe3d6bb7f130a69a4f949aaf7bb66abf358217987b1bbc2d23c14c317c
+      IMAGE: ghcr.io/reihlinstinct/geni-uploader@sha256:2fa466f87e549d03a0a3e406047e3c733d1efdb582956c066b9530576c96c254
       SOURCE_DETAILS_IMAGE_READY: "yes"
-      PLAN_SUMMARY_IMAGE_READY: "no"
+      PLAN_SUMMARY_IMAGE_READY: "yes"
       AGE_VERSION: v1.3.2
       AGE_SHA256: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
     steps:
