@@ -608,9 +608,10 @@ export async function handle(
         diagnostic.stage = "discovery-owner-id";
         if (typeof owner.id !== "string" || !/^profile-[0-9]{1,30}$/.test(owner.id)) fail();
         diagnostic.stage = "discovery-owner-merge-missing";
-        if (owner.merge_pending === undefined) fail();
+        const mergeUnknown = !Object.hasOwn(owner, "merge_pending");
+        if (mergeUnknown && Object.hasOwn(owner, "merged_into")) fail();
         diagnostic.stage = "discovery-owner-merge-status";
-        if (owner.merge_pending !== false) fail();
+        if (!mergeUnknown && owner.merge_pending !== false) fail();
         diagnostic.stage = "discovery-owner-merged";
         if (owner.merged_into !== undefined && owner.merged_into !== null) fail();
         diagnostic.stage = "discovery-owner-wrapper";
@@ -620,7 +621,8 @@ export async function handle(
             (owner.last_name !== undefined && (typeof owner.last_name !== "string" || owner.last_name.length > 200))) fail();
         return page("<h1>Identity discovered, not connected</h1><p>Verify this is the account you personally intended. This does not establish a stored connection or authorize a tree change.</p><p>Canonical ID: " +
           escapeHtml(owner.id) + "</p><p>Name: " + escapeHtml(owner.first_name + " " + (owner.last_name || "")) +
-          "</p><p>Pending merge: false. No token saved. No token displayed.</p>", 200, {
+          "</p><p>" + (mergeUnknown ? "Warning: merge status not supplied by Geni (unknown). This is identity evidence only, not connection or upload readiness." : "Pending merge: false.") +
+          "</p><p>No token saved. No token displayed.</p>", 200, {
             "set-cookie": cookieHeader(COOKIE, "", 0)
           });
       }

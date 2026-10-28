@@ -868,7 +868,7 @@ test('purpose cannot be injected at callback, changed across deployment or omitt
  const e=setup(),b=await begin(e);e.OAUTH_STATES.entries.get('entry').payload={destination:'primary'};
  const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:nofetch});assert.equal(r.status,400);
 });
-for(const owner of [{...discovered,id:99123},{...discovered,id:'99123'},{...discovered,merge_pending:true},{...discovered,merge_pending:undefined},{...discovered,merged_into:'profile-99555'},{...discovered,results:[]},{...discovered,first_name:''},{...discovered,first_name:[]},{...discovered,last_name:3},{...discovered,first_name:'x'.repeat(201)},new Response('',{status:302,headers:{location:'https://evil.invalid'}}),new Response('ZZSENSITIVE',{status:500}),new Response('not json')]) {
+for(const owner of [{...discovered,id:99123},{...discovered,id:'99123'},{...discovered,merge_pending:true},{...discovered,merge_pending:undefined,merged_into:null},{...discovered,merged_into:'profile-99555'},{...discovered,results:[]},{...discovered,first_name:''},{...discovered,first_name:[]},{...discovered,last_name:3},{...discovered,first_name:'x'.repeat(201)},new Response('',{status:302,headers:{location:'https://evil.invalid'}}),new Response('ZZSENSITIVE',{status:500}),new Response('not json')]) {
  test('malformed merged or redirected discovery identity fails without writer '+JSON.stringify(owner),async()=>{
  const e=discoveryEnv(),b=await beginDiscovery(e),calls=[];const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:discoveryFetcher(owner,calls)});assert.equal(r.status,400);assert.equal(calls.length,2);const text=await r.text();assert.ok(!text.includes('ZZSENSITIVE'));assert.ok(!text.includes('ZZACCESS'));
  });
@@ -889,7 +889,7 @@ for(const [label,value] of [
  ['format',new Response('ZZSENSITIVE')],['format',new Response('x'.repeat(65537))],
  ['format',Response.json([])],['format',Response.json(null)],
  ['provider',{...discovered,error:'ZZSENSITIVE'}],['id',{...discovered,id:3}],
- ['merge-missing',{...discovered,merge_pending:undefined}],
+ ['merge-missing',{...discovered,merge_pending:undefined,merged_into:null}],
  ['merge-status',{...discovered,merge_pending:true}],['merge-status',{...discovered,merge_pending:'false'}],
  ['merge-status',{...discovered,merge_pending:null}],['merged',{...discovered,merged_into:'profile-99555'}],
  ['wrapper',{...discovered,results:[]}],['name',{...discovered,first_name:''}],['name',{...discovered,last_name:5}]
@@ -903,4 +903,19 @@ for(const [label,value] of [
  assert.equal(r.status,400);const text=await r.text();assert.match(text,new RegExp('Stage: discovery-owner-'+label+'\\.'));
  assert.doesNotMatch(text,/ZZSENSITIVE|ZZACCESS|ZZREFRESH|ZZCODE|ZZSECRET|evil.invalid|profile-99555/);
  assert.ok(calls.length<=2);assert.equal(e.OAUTH_STATES.entries.size,0);
+});
+test('discovery only accepts both merge fields absent with explicit unknown warning, never false claim',async()=>{
+ const e=discoveryEnv(),b=await beginDiscovery(e),calls=[];const owner={id:'profile-99123',first_name:'ZZRoot',last_name:'ZZPerson'};
+ const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:discoveryFetcher(owner,calls)});
+ assert.equal(r.status,200);const text=await r.text();assert.match(text,/profile-99123/);assert.match(text,/ZZRoot ZZPerson/);assert.match(text,/Warning: merge status not supplied by Geni \(unknown\)/);assert.match(text,/identity evidence only/);assert.doesNotMatch(text,/Pending merge: false|ZZACCESS|ZZREFRESH/);assert.equal(calls.length,2);assert.equal(e.OAUTH_STATES.entries.size,0);
+});
+for(const value of [null,'','profile-99555',false,[],{}])test('unknown merge flag plus any present merge target stops '+JSON.stringify(value),async()=>{
+ const e=discoveryEnv(),b=await beginDiscovery(e),calls=[];const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:discoveryFetcher({id:'profile-99123',first_name:'ZZRoot',merged_into:value},calls)});assert.equal(r.status,400);assert.match(await r.text(),/discovery-owner-merge-missing/);assert.equal(calls.length,2);
+});
+for(const change of [{first_name:''},{first_name:null},{id:'99123'},{results:[]}])test('unknown merge still validates id name wrapper '+JSON.stringify(change),async()=>{
+ const e=discoveryEnv(),b=await beginDiscovery(e);const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:discoveryFetcher({id:'profile-99123',first_name:'ZZRoot',...change},[])});assert.equal(r.status,400);
+});
+test('missing merge flag still rejects pinned credential storage before writer',async()=>{
+ const e={...setup(),PRIMARY_OWNER_NODE:'profile-99123',SECONDARY_OWNER_NODE:'profile-99555'},b=await beginConnection(e,'secondary');let calls=0;
+ const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:async u=>{calls++;if(u.includes('request_token'))return Response.json({access_token:'ZZACCESS',refresh_token:'ZZREFRESH',expires_in:600});assert.equal(u,'https://www.geni.com/api/profile?fields=id,merge_pending,merged_into');return Response.json({id:'profile-99555'});}});assert.equal(r.status,400);assert.equal(calls,2);
 });
