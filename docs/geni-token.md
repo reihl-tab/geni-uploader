@@ -28,7 +28,7 @@ https://www.geni.com/platform/developer/help (requires a Geni login).
        podman run --rm --tmpfs /work \
          -e GENI_UPLOAD_REPO=https://github.com/<you>/<repo>.git \
          -v ~/.gh-token:/run/gh-token:ro,Z \
-         quay.io/reihlinstinct/geni-uploader@sha256:<pinned-digest> \
+         ghcr.io/reihlinstinct/geni-uploader@sha256:<pinned-digest> \
          auth-url --client-id <your-app-id>
 
 2. Open the printed URL in your browser and authorize the application.

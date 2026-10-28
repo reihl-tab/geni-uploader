@@ -10,7 +10,7 @@ import source_details as s
 
 ITEM = {"key": "ZZsource", "kind": "document", "object_id": "101",
         "expect": {"source_url": "https://example.invalid/ZZsource"},
-        "set": {"description": "ZZ approved description", "date": "1933-01-04"},
+        "set": {"description_en": "ZZ approved description", "date": "1933-01-04"},
         "targets": [{"profile_id": "201", "expect_name": "ZZPerson ZZTest"}],
         "manual_facts": ["ZZ name citation"]}
 
@@ -64,7 +64,7 @@ def test_existing_object_repair_keeps_tags_and_is_idempotent(tmp_path):
         n = len([c for c in fake.calls if c[0] == "POST"])
         s.apply_plan(s.checked_plan(items, "ZZtoken"), "ZZtoken", tmp_path / "state")
         assert len([c for c in fake.calls if c[0] == "POST"]) == n
-    assert fake.obj["description"] == ITEM["set"]["description"]
+    assert fake.obj["description"] == ITEM["set"]["description_en"]
     assert set(fake.obj["tags"]) == {"profile-999", "profile-201"}
     assert n == 2
 
@@ -162,6 +162,6 @@ def test_checkpoint_commit_uses_local_identity():
 def test_released_metadata_image_is_pinned_with_explicit_readiness():
     from pathlib import Path
     text = (Path(s.__file__).parent / ".github/workflows/geni-upload.yml").read_text()
-    assert "sha256:f9ec8988296da9634e2c1cb5feb5df8060b7c99edb804cd0c301741045873909" in text
+    assert "sha256:2fa466f87e549d03a0a3e406047e3c733d1efdb582956c066b9530576c96c254" in text
     assert 'SOURCE_DETAILS_IMAGE_READY: "yes"' in text
     assert '${SOURCE_DETAILS_IMAGE_READY:-no}' in text
