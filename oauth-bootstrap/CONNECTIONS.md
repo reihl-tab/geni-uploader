@@ -124,3 +124,37 @@ production parent/probe checks are unchanged. No pin is enrolled automatically.
 Official source: https://www.geni.com/platform/developer/help/api?path=profile
 says blank fields are omitted, but does NOT define missing Boolean as false.
 An unknown result therefore makes no claim about the absence of a merge.
+
+## Explicit secondary credential-custody opt-in (#207)
+
+`SECONDARY_ALLOW_UNKNOWN_MERGE=true` is an optional server-side setting, valid
+only in normal connection mode with distinct pinned primary and secondary owners.
+Other values fail setup; absence retains strict behavior. This opt-in applies
+ONLY to secondary, and only if both merge properties are completely absent and
+token-self ID exactly equals SECONDARY_OWNER_NODE. It never converts missing to
+false. Present null/nonboolean/true flags, a merge target, wrapper or wrong ID
+stop before storage. Primary and tertiary remain strict. Discovery mode rejects
+this setting rather than silently mixing custody with discovery.
+
+Secondary pending and finalized refresh bundles contain the same permanent
+`owner_attestation`: expected owner_node, merge_status (`unknown` or
+`explicit_false`), observed_at UTC time, policy_version
+`pinned-secondary-custody-v1`, credential_storage_only:true and upload_ready:false.
+This evidence is encrypted with the bundle. Partial writes stop without retry;
+retain/review pending recovery for this exact slot. No attestation is added to
+primary or tertiary bundles. Nothing in this change authorizes refresh consumers,
+uploads, a live Plan or profile creation. Those must independently validate owner
+and their own policy; no secondary consumer is wired by this feature. Never drop
+or upgrade unknown status in future refresh/recovery. A future consumer/refresh
+implementation must preserve the attestation and re-check identity before use.
+
+A rollout for connecting secondary must disable the primary start route in its
+separately reviewed deployment if primary reconnection is not authorized. The
+existing primary credential is neither copied, renamed nor reconnected during
+secondary setup. Do not publish real owner pins or private slot mappings.
+
+Set `SECONDARY_ONLY=true` for that restricted rollout: the authenticated landing
+shows only secondary, primary/tertiary start requests reject, and callback rejects
+in-flight primary/tertiary states before code exchange. Other values fail setup;
+it cannot be combined with discovery mode. Pins still protect both configured
+identities. This is the intended deployment for a secondary-only approval.

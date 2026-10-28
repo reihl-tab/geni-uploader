@@ -93,6 +93,11 @@ const escapeHtml = (v) => v.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;
 
 function config(env) {
   if (env.DISCOVERY_ONLY !== undefined && env.DISCOVERY_ONLY !== "true") fail();
+  if (env.SECONDARY_ONLY !== undefined && env.SECONDARY_ONLY !== "true") fail();
+  if (env.SECONDARY_ONLY === "true" && (!/^profile-[0-9]{1,30}$/.test(env.SECONDARY_OWNER_NODE || "") || env.DISCOVERY_ONLY === "true")) fail();
+  if (env.SECONDARY_ALLOW_UNKNOWN_MERGE !== undefined && env.SECONDARY_ALLOW_UNKNOWN_MERGE !== "true") fail();
+  if (env.SECONDARY_ALLOW_UNKNOWN_MERGE === "true" &&
+      (!/^profile-[0-9]{1,30}$/.test(env.SECONDARY_OWNER_NODE || "") || env.DISCOVERY_ONLY === "true")) fail();
   const origin = new URL(env.CALLBACK_ORIGIN);
   // Enabling any additional destination also pins primary, preventing a wrong
   // button/account from replacing the existing primary connection.
@@ -496,6 +501,9 @@ export async function handle(
       if (env.DISCOVERY_ONLY === "true") return page(
         '<h1>Discover account identity only</h1><p>No connection is saved. No tree changes. Confirm the intended Geni account in your browser before proceeding.</p><form method="post" action="/discover/start"><button>Discover current Geni account</button></form>',
         200, { "referrer-policy": "strict-origin" });
+      if (env.SECONDARY_ONLY === "true") return page(
+        '<h1>Connect isolated secondary only</h1><p>Primary connection is disabled. Credential storage only, no upload or profile creation. Merge status may remain unknown.</p><form method="post" action="/connections/secondary/start"><button>Connect secondary (isolated)</button></form>',
+        200, { "referrer-policy": "strict-origin" });
       return page(
         '<h1>Choose connection</h1><p>Confirm the intended Geni account in your own browser. Each fixed destination is separate. No automatic account detection.</p><form method="post" action="/start"><button>Connect primary</button></form><form method="post" action="/connections/secondary/start"><button>Connect secondary (isolated)</button></form><form method="post" action="/connections/tertiary/start"><button>Connect tertiary (isolated)</button></form>',
         200,
@@ -509,6 +517,7 @@ export async function handle(
       if (url.search) fail();
       const destination = discovery ? undefined : url.pathname === "/start" ? "primary" : selectedPath[1];
       if (!discovery && (!Object.hasOwn(CONNECTIONS, destination) || (selectedPath && destination === "primary"))) fail();
+      if (!discovery && env.SECONDARY_ONLY === "true" && destination !== "secondary") fail();
       const selected = CONNECTIONS[destination];
       if (!discovery && destination !== "primary" && !/^profile-[0-9]{1,30}$/.test(env[selected.expectedOwner] || "")) fail();
       diagnostic.stage = "geni-origin";
@@ -565,6 +574,7 @@ export async function handle(
       if (discovery ? saved.destination !== undefined : !Object.hasOwn(CONNECTIONS, saved.destination)) fail();
       // Destination comes only from consumed server state, never callback input.
       if (url.searchParams.has("destination") || url.searchParams.has("connection")) fail();
+      if (!discovery && env.SECONDARY_ONLY === "true" && saved.destination !== "secondary") fail();
       const selected = CONNECTIONS[saved.destination];
       diagnostic.stage = "geni-exchange";
       const token = await responseJson(
@@ -626,6 +636,7 @@ export async function handle(
             "set-cookie": cookieHeader(COOKIE, "", 0)
           });
       }
+      let ownerAttestation;
       if (selected.expectedOwner && (saved.destination !== "primary" || env.PRIMARY_OWNER_NODE !== undefined)) {
         diagnostic.stage = "geni-owner";
         const expected = env[selected.expectedOwner];
@@ -635,12 +646,23 @@ export async function handle(
             method: "GET", redirect: "manual",
             headers: { Authorization: "Bearer " + token.access_token, Accept: "application/json" },
           }));
-        if (owner.id !== expected || owner.merge_pending !== false ||
+        const unknownAllowed = saved.destination === "secondary" && env.SECONDARY_ALLOW_UNKNOWN_MERGE === "true" &&
+          !Object.hasOwn(owner, "merge_pending") && !Object.hasOwn(owner, "merged_into");
+        if (owner.id !== expected || (!unknownAllowed && owner.merge_pending !== false) ||
             (owner.merged_into !== undefined && owner.merged_into !== null) ||
             owner.results !== undefined) fail();
+        if (saved.destination === "secondary") ownerAttestation = {
+          owner_node: expected,
+          merge_status: unknownAllowed ? "unknown" : "explicit_false",
+          observed_at: new Date().toISOString(),
+          policy_version: "pinned-secondary-custody-v1",
+          credential_storage_only: true,
+          upload_ready: false,
+        };
       }
       const bundle = {
         schema: 1,
+        ...(ownerAttestation ? { owner_attestation: ownerAttestation } : {}),
         client_id: env.GENI_CLIENT_ID,
         client_secret: env.GENI_APP_SECRET,
         redirect_uri: cfg.redirect,
