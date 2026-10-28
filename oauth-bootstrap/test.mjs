@@ -712,3 +712,105 @@ test("GitHub exchange maps only fixed outcomes and sets server User-Agent", asyn
     assert.equal(e.OAUTH_STATES.entries.size, 0);
   }
 });
+
+async function beginConnection(e, destination) {
+  const r = await handle(request('/connections/' + destination + '/start', {
+    method: 'POST', headers: { Origin: origin, Cookie: await session() },
+  }), e, { fetcher: nofetch });
+  assert.equal(r.status, 303);
+  const u = new URL(r.headers.get('location'));
+  assert.equal(u.searchParams.get('redirect_uri'), origin + '/callback');
+  return { state: u.searchParams.get('state'),
+    cookie: r.headers.get('set-cookie').split(';')[0] + '; ' + await session() };
+}
+
+for (const destination of ['secondary', 'tertiary']) {
+  test(destination + ' writes only its fixed isolated destination after owner proof', async () => {
+    await sodium.ready;
+    const key = sodium.crypto_box_keypair();
+    const e = { ...setup(), PRIMARY_OWNER_NODE: 'profile-99000', SECONDARY_OWNER_NODE: 'profile-99123', TERTIARY_OWNER_NODE: 'profile-99124' };
+    const b = await beginConnection(e, destination);
+    const writes = [], calls = [];
+    const owner = destination === 'secondary' ? e.SECONDARY_OWNER_NODE : e.TERTIARY_OWNER_NODE;
+    const fetcher = async (u, o) => {
+      calls.push(u);
+      assert.equal(o.redirect, 'manual');
+      if (u.endsWith('request_token')) return Response.json({ access_token:'ZZACCESS', refresh_token:'ZZREFRESH', expires_in:300 });
+      if (u.startsWith('https://www.geni.com/api/profile?')) {
+        assert.equal(o.method, 'GET');
+        assert.equal(o.headers.Authorization, 'Bearer ZZACCESS');
+        return Response.json({ id: owner, merge_pending:false });
+      }
+      if (u.endsWith('/public-key')) return Response.json({ key:sodium.to_base64(key.publicKey, sodium.base64_variants.ORIGINAL), key_id:'ZZKEY' });
+      assert.equal(o.method, 'PUT');
+      writes.push(u.split('/').at(-1));
+      return new Response(null,{status:204});
+    };
+    const r = await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}), e,{fetcher});
+    assert.equal(r.status,303);
+    const prefix = destination.toUpperCase();
+    assert.deepEqual(writes, ['GENI_'+prefix+'_OAUTH_REFRESH_BUNDLE','GENI_'+prefix+'_ACCESS_TOKEN','GENI_'+prefix+'_OAUTH_REFRESH_BUNDLE']);
+    assert.ok(calls[1].startsWith('https://www.geni.com/api/profile?'));
+    assert.doesNotMatch(await r.text(), /ZZACCESS|ZZREFRESH|9912/);
+    const replay = await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:nofetch});
+    assert.equal(replay.status,400);
+  });
+}
+
+test('missing additional owner configuration stops before state or exchange', async () => {
+  const e = setup();
+  const r = await handle(request('/connections/secondary/start',{method:'POST',headers:{Origin:origin,Cookie:await session()}}),e,{fetcher:nofetch});
+  assert.equal(r.status,400);
+  assert.equal(e.OAUTH_STATES.entries.size,0);
+});
+
+for (const owner of [{id:'profile-99555',merge_pending:false}, {id:'profile-99123'},
+  {id:'profile-99123',merge_pending:true}, {id:'profile-99123',merge_pending:false,merged_into:'profile-2'},
+  {id:'profile-99123',merge_pending:false,results:[]}]) {
+  test('unverified additional owner never writes any secret '+JSON.stringify(owner), async () => {
+    const e = {...setup(),PRIMARY_OWNER_NODE:'profile-99000',SECONDARY_OWNER_NODE:'profile-99123'};
+    const b = await beginConnection(e,'secondary');
+    const calls = [];
+    const r = await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:async(u)=>{
+      calls.push(u);
+      if(u.endsWith('request_token')) return Response.json({access_token:'ZZACCESS',refresh_token:'ZZREFRESH',expires_in:300});
+      assert.ok(u.startsWith('https://www.geni.com/api/profile?'));
+      return Response.json(owner);
+    }});
+    assert.equal(r.status,400); assert.equal(calls.length,2);
+    assert.doesNotMatch(await r.text(),/ZZ|99123|99555/);
+  });
+}
+
+for(const path of ['/connections/unknown/start','/connections/primary/start','/connections/secondary/start?destination=primary']) {
+  test('unregistered or query-selected destination rejected '+path,async()=>{
+    const r=await handle(request(path,{method:'POST',headers:{Origin:origin,Cookie:await session()}}),{...setup(),PRIMARY_OWNER_NODE:'profile-99000',SECONDARY_OWNER_NODE:'profile-99123'},{fetcher:nofetch});
+    assert.equal(r.status,400);
+  });
+}
+
+test('callback destination injection cannot redirect primary state',async()=>{
+  const e=setup(); const b=await begin(e);
+  const r=await handle(request('/callback?code=ZZCODE&state='+b.state+'&destination=secondary',{headers:{Cookie:b.cookie}}),e,{fetcher:nofetch});
+  assert.equal(r.status,400);
+});
+
+test('additional configuration requires distinct pinned primary owner', async()=>{
+  for(const pins of [{SECONDARY_OWNER_NODE:'profile-99123'},
+    {PRIMARY_OWNER_NODE:'profile-99123',SECONDARY_OWNER_NODE:'profile-99123'}]) {
+    const r=await handle(request('/'),{...setup(),...pins},{fetcher:nofetch});
+    assert.equal(r.status,400);
+  }
+});
+
+test('wrong additional account on primary button cannot overwrite primary',async()=>{
+  const e={...setup(),PRIMARY_OWNER_NODE:'profile-99000',SECONDARY_OWNER_NODE:'profile-99123'};
+  const b=await begin(e); const calls=[];
+  const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:async(u)=>{
+    calls.push(u);
+    if(u.endsWith('request_token'))return Response.json({access_token:'ZZACCESS',refresh_token:'ZZREFRESH',expires_in:300});
+    assert.ok(u.startsWith('https://www.geni.com/api/profile?'));
+    return Response.json({id:'profile-99123',merge_pending:false});
+  }});
+  assert.equal(r.status,400);assert.equal(calls.length,2);
+});
