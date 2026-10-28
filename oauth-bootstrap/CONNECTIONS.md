@@ -93,3 +93,15 @@ on discovery results: never share/copy the address. Share only the minimal resul
 text or a cropped result with address bar excluded. Existing provider URL-retention
 limitations still apply and need rollout approval. Tests use synthetic identities
 only; no live OAuth is performed by agents.
+
+## Fixed discovery failure diagnostics
+
+Discovery has separate allowlisted stages for transport, HTTP, format, provider
+error, canonical ID, missing merge flag, non-false merge flag, merge target,
+results wrapper and name shape. Only a static stage label is shown; no status
+body, response data, token, identity or URL is included in errors or logs.
+A stage identifies the failed check, not its root cause. No rejection rule is
+relaxed. In particular, an absent `merge_pending` is still a stop: the vendor's
+statement that blank fields may be omitted does not define absent Boolean as
+false. Report only the stage, not the callback address. A consumed state cannot
+be replayed; any retest requires a fresh human-started flow after review/release.

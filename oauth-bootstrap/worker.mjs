@@ -50,6 +50,16 @@ const STAGES = new Set([
   "geni-exchange",
   "geni-token-shape",
   "geni-owner",
+  "discovery-owner-transport",
+  "discovery-owner-http",
+  "discovery-owner-format",
+  "discovery-owner-provider",
+  "discovery-owner-id",
+  "discovery-owner-merge-missing",
+  "discovery-owner-merge-status",
+  "discovery-owner-merged",
+  "discovery-owner-wrapper",
+  "discovery-owner-name",
   "writer-key",
   "writer-bundle",
   "writer-access",
@@ -580,15 +590,33 @@ export async function handle(
       if (!Number.isSafeInteger(token.expires_in) || token.expires_in <= 0)
         fail();
       if (discovery) {
-        diagnostic.stage = "geni-owner";
-        const owner = await responseJson(await deps.fetcher(
+        diagnostic.stage = "discovery-owner-transport";
+        const response = await deps.fetcher(
           "https://www.geni.com/api/profile?fields=id,first_name,last_name,merge_pending,merged_into", {
             method: "GET", redirect: "manual",
             headers: { Authorization: "Bearer " + token.access_token, Accept: "application/json" },
-          }));
-        if (typeof owner.id !== "string" || !/^profile-[0-9]{1,30}$/.test(owner.id) || owner.merge_pending !== false ||
-            (owner.merged_into !== undefined && owner.merged_into !== null) || owner.results !== undefined ||
-            typeof owner.first_name !== "string" || !owner.first_name.trim() || owner.first_name.length > 200 ||
+          });
+        diagnostic.stage = "discovery-owner-http";
+        if (!response.ok) fail();
+        diagnostic.stage = "discovery-owner-format";
+        const raw = await response.text();
+        if (raw.length > 65536) fail();
+        const owner = JSON.parse(raw);
+        if (!owner || typeof owner !== "object" || Array.isArray(owner)) fail();
+        diagnostic.stage = "discovery-owner-provider";
+        if (owner.error) fail();
+        diagnostic.stage = "discovery-owner-id";
+        if (typeof owner.id !== "string" || !/^profile-[0-9]{1,30}$/.test(owner.id)) fail();
+        diagnostic.stage = "discovery-owner-merge-missing";
+        if (owner.merge_pending === undefined) fail();
+        diagnostic.stage = "discovery-owner-merge-status";
+        if (owner.merge_pending !== false) fail();
+        diagnostic.stage = "discovery-owner-merged";
+        if (owner.merged_into !== undefined && owner.merged_into !== null) fail();
+        diagnostic.stage = "discovery-owner-wrapper";
+        if (owner.results !== undefined) fail();
+        diagnostic.stage = "discovery-owner-name";
+        if (typeof owner.first_name !== "string" || !owner.first_name.trim() || owner.first_name.length > 200 ||
             (owner.last_name !== undefined && (typeof owner.last_name !== "string" || owner.last_name.length > 200))) fail();
         return page("<h1>Identity discovered, not connected</h1><p>Verify this is the account you personally intended. This does not establish a stored connection or authorize a tree change.</p><p>Canonical ID: " +
           escapeHtml(owner.id) + "</p><p>Name: " + escapeHtml(owner.first_name + " " + (owner.last_name || "")) +

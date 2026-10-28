@@ -883,3 +883,24 @@ test('discovery cannot claim authorization saved through complete route',async()
  const normal=await handle(request('/complete',{headers:{Cookie:await session()}}),setup(),{fetcher:nofetch});assert.equal(normal.status,200);
  const query=await handle(request('/complete?purpose=discover',{headers:{Cookie:await session()}}),setup(),{fetcher:nofetch});assert.equal(query.status,404);
 });
+for(const [label,value] of [
+ ['transport',new Error('ZZSENSITIVE')],['http',new Response('ZZSENSITIVE',{status:403})],
+ ['http',new Response('',{status:302,headers:{location:'https://evil.invalid/ZZSENSITIVE'}})],
+ ['format',new Response('ZZSENSITIVE')],['format',new Response('x'.repeat(65537))],
+ ['format',Response.json([])],['format',Response.json(null)],
+ ['provider',{...discovered,error:'ZZSENSITIVE'}],['id',{...discovered,id:3}],
+ ['merge-missing',{...discovered,merge_pending:undefined}],
+ ['merge-status',{...discovered,merge_pending:true}],['merge-status',{...discovered,merge_pending:'false'}],
+ ['merge-status',{...discovered,merge_pending:null}],['merged',{...discovered,merged_into:'profile-99555'}],
+ ['wrapper',{...discovered,results:[]}],['name',{...discovered,first_name:''}],['name',{...discovered,last_name:5}]
+])test('safe discovery diagnostic '+label+' '+JSON.stringify(value),async()=>{
+ const e=discoveryEnv(),b=await beginDiscovery(e),calls=[];
+ const original=discoveryFetcher(value,calls);
+ const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:async(u,o)=>{
+  if(u.startsWith('https://www.geni.com/api/profile?') && value instanceof Error)throw value;
+  return original(u,o);
+ }});
+ assert.equal(r.status,400);const text=await r.text();assert.match(text,new RegExp('Stage: discovery-owner-'+label+'\\.'));
+ assert.doesNotMatch(text,/ZZSENSITIVE|ZZACCESS|ZZREFRESH|ZZCODE|ZZSECRET|evil.invalid|profile-99555/);
+ assert.ok(calls.length<=2);assert.equal(e.OAUTH_STATES.entries.size,0);
+});
