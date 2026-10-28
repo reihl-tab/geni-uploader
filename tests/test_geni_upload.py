@@ -19,7 +19,7 @@ MANIFEST = {
                 {
                     "title": "Doc A",
                     "source_url": "https://x/1",
-                    "description": "d",
+                    "description_en": "ZZ synthetic source description", "description": "d",
                     "labels": "source",
                 }
             ],
@@ -85,7 +85,7 @@ class ManifestTests(unittest.TestCase):
                     "photos": [
                         {
                             "title": "Scan",
-                            "description": "d",
+                            "description_en": "ZZ synthetic source description", "description": "d",
                             "file": "scripts/geni_upload/packages/x/scan.jpg",
                         }
                     ],
@@ -213,7 +213,7 @@ class RunTests(unittest.TestCase):
                 k = ("123", "documents" if kind == "profile_documents" else "photos")
                 return {
                     "results": [
-                        {"title": t[0], "source_url": t[1] if len(t) > 1 else None}
+                        {"id": "999", "title": t[0], "source_url": t[1] if len(t) > 1 else None}
                         for t in self.listings[k]
                     ]
                 }
@@ -310,7 +310,20 @@ class RunTests(unittest.TestCase):
         self.assertEqual(g.cmd_run(args), 3)  # uncertain-write stop, no retry
 
 
+def _state_path_under_a_file():
+    """A state path whose parent 'directory' is a regular file. Creating a
+    temp file there fails with ENOTDIR for every user, root included, unlike
+    chmod 0o555, which root ignores (CI containers often run as root)."""
+    fd, blocker = tempfile.mkstemp()
+    os.close(fd)
+    return os.path.join(blocker, "s.json")
+
+
+IS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+
+
 class StatePreflightTests(unittest.TestCase):
+    @unittest.skipIf(IS_ROOT, "root ignores directory write permissions")
     def test_preflight_rejects_unwritable_dir(self):
         d = tempfile.mkdtemp()
         os.chmod(d, 0o555)
@@ -320,6 +333,10 @@ class StatePreflightTests(unittest.TestCase):
         finally:
             os.chmod(d, 0o755)
 
+    def test_preflight_rejects_unusable_state_dir_for_any_user(self):
+        with self.assertRaises(g.ApiError):
+            g.preflight_state_writable(_state_path_under_a_file())
+
     def test_preflight_accepts_writable_dir(self):
         d = tempfile.mkdtemp()
         g.preflight_state_writable(os.path.join(d, "s.json"))
@@ -328,10 +345,8 @@ class StatePreflightTests(unittest.TestCase):
         calls = []
         orig = g.execute
         g.execute = lambda *a, **k: calls.append(a)
-        d = tempfile.mkdtemp()
-        os.chmod(d, 0o555)
         try:
-            args = _run_args(manifest=_manifest_file(MANIFEST), state=os.path.join(d, "s.json"))
+            args = _run_args(manifest=_manifest_file(MANIFEST), state=_state_path_under_a_file())
             old = os.environ.get("GENI_ACCESS_TOKEN")
             os.environ["GENI_ACCESS_TOKEN"] = "t"
             try:
@@ -345,7 +360,6 @@ class StatePreflightTests(unittest.TestCase):
             self.assertEqual(calls, [], "no network call may happen before state preflight passes")
         finally:
             g.execute = orig
-            os.chmod(d, 0o755)
 
 
 class VerificationAndLogTests(unittest.TestCase):
@@ -363,7 +377,7 @@ class VerificationAndLogTests(unittest.TestCase):
                 k = ("123", "documents" if kind == "profile_documents" else "photos")
                 return {
                     "results": [
-                        {"title": t[0], "source_url": t[1] if len(t) > 1 else None}
+                        {"id": "999", "title": t[0], "source_url": t[1] if len(t) > 1 else None}
                         for t in self.listings[k]
                     ]
                 }
@@ -424,7 +438,7 @@ class RepoSyncTests(unittest.TestCase):
                 k = ("123", "documents" if kind == "profile_documents" else "photos")
                 return {
                     "results": [
-                        {"title": t[0], "source_url": t[1] if len(t) > 1 else None}
+                        {"id": "999", "title": t[0], "source_url": t[1] if len(t) > 1 else None}
                         for t in self.listings[k]
                     ]
                 }
@@ -567,7 +581,7 @@ class SyncFailureTests(unittest.TestCase):
                 k = ("123", "documents" if kind == "profile_documents" else "photos")
                 return {
                     "results": [
-                        {"title": t[0], "source_url": t[1] if len(t) > 1 else None}
+                        {"id": "999", "title": t[0], "source_url": t[1] if len(t) > 1 else None}
                         for t in self.listings[k]
                     ]
                 }
@@ -680,7 +694,7 @@ class UncertainBlockTests(unittest.TestCase):
                 k = ("123", "documents" if kind == "profile_documents" else "photos")
                 return {
                     "results": [
-                        {"title": t[0], "source_url": t[1] if len(t) > 1 else None}
+                        {"id": "999", "title": t[0], "source_url": t[1] if len(t) > 1 else None}
                         for t in self.listings[k]
                     ]
                 }
@@ -1042,12 +1056,12 @@ class PlanThrottleAbortTests(unittest.TestCase):
                 {
                     "profile_id": "123",
                     "expect_name": "Tamar Vardi",
-                    "documents": [{"title": "A", "source_url": "https://x/1"}],
+                    "documents": [{"title": "A", "description_en": "ZZ synthetic source description", "source_url": "https://x/1"}],
                 },
                 {
                     "profile_id": "456",
                     "expect_name": "Second Person",
-                    "documents": [{"title": "B", "source_url": "https://x/2"}],
+                    "documents": [{"title": "B", "description_en": "ZZ synthetic source description", "source_url": "https://x/2"}],
                 },
             ]
         }
@@ -1795,7 +1809,7 @@ class WorkflowModeAlignmentTest(unittest.TestCase):
         with open(os.path.join(root, "geni_upload.py"), encoding="utf-8") as f:
             src = f.read()
         registered = (set(re.findall(r'add_parser\("([a-z-]+)"\)', src))
-                      | set(re.findall(r'\("([a-z]+)", cmd_', src)))
+                      | set(re.findall(r'\("([a-z-]+)", cmd_', src)))
         workflow_only = {"selftest", "details-plan", "details-repair"}  # entrypoint routes
         cli_only = {"auth-url"}       # local helper, never dispatched
         self.assertEqual(options - workflow_only, registered - cli_only)
@@ -1803,7 +1817,7 @@ class WorkflowModeAlignmentTest(unittest.TestCase):
 
 class AlsoTagValidationTest(unittest.TestCase):
     def _item(self, **kw):
-        it = {"title": "Doc A", "source_url": "https://x/1"}
+        it = {"description_en": "ZZ synthetic source description", "title": "Doc A", "source_url": "https://x/1"}
         it.update(kw)
         return {"targets": [
             {"profile_id": "123", "expect_name": "Tamar Vardi",
@@ -1846,7 +1860,7 @@ class AlsoTagRunTest(unittest.TestCase):
         "targets": [
             {"profile_id": "123", "expect_name": "Tamar Vardi",
              "documents": [], "photos": [
-                 {"title": "Scan", "description": "d",
+                 {"title": "Scan", "description_en": "ZZ synthetic source description", "description": "d",
                   "file": "scan.jpg", "also_tag": ["456"]}]},
             {"profile_id": "456", "expect_name": "Gadi Vardi",
              "documents": [], "photos": []},
@@ -1887,7 +1901,7 @@ class AlsoTagRunTest(unittest.TestCase):
                 for pid in names:
                     if f"profile-{pid}" in url:
                         return {"results": [
-                            {"title": t[0],
+                            {"id": "999", "title": t[0],
                              "source_url": t[1] if len(t) > 1 else None}
                             for t in listings[(pid, kd)]]}
                 raise g.ApiError(f"unknown listing url {url}")
@@ -1964,7 +1978,7 @@ class AlsoTagInterruptionTest(unittest.TestCase):
         "targets": [
             {"profile_id": "123", "expect_name": "Tamar Vardi",
              "documents": [], "photos": [
-                 {"title": "Scan", "description": "d",
+                 {"title": "Scan", "description_en": "ZZ synthetic source description", "description": "d",
                   "file": "scan.jpg", "also_tag": ["456", "789"]}]},
             {"profile_id": "456", "expect_name": "Gadi Vardi",
              "documents": [], "photos": []},
@@ -2014,7 +2028,7 @@ class AlsoTagInterruptionTest(unittest.TestCase):
                 for pid in names:
                     if f"profile-{pid}" in url:
                         return {"results": [
-                            {"title": t[0],
+                            {"id": "999", "title": t[0],
                              "source_url": t[1] if len(t) > 1 else None}
                             for t in listings[(pid, kd)]]}
                 raise g.ApiError(f"unknown listing url {url}")

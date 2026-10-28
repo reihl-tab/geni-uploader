@@ -18,11 +18,11 @@ architecture first - the published image is linux/amd64:
 
 Pull the image BY DIGEST (a tag can be repointed; a digest cannot):
 
-    podman pull quay.io/reihlinstinct/geni-uploader@sha256:<pinned-digest>
+    podman pull ghcr.io/reihlinstinct/geni-uploader@sha256:<pinned-digest>
 
 Verify what you got before running:
 
-    podman inspect quay.io/reihlinstinct/geni-uploader@sha256:<pinned-digest> \
+    podman inspect ghcr.io/reihlinstinct/geni-uploader@sha256:<pinned-digest> \
       --format '{{.Digest}} {{.Architecture}}'
 
 On Apple Silicon, run with `--arch amd64` (emulated) or build locally from
@@ -55,7 +55,7 @@ variable if you deliberately choose it).
 
 ## 3. Code vs data: image, repo, ref, pin
 
-- The IMAGE is immutable: `quay.io/reihlinstinct/geni-uploader@sha256:...`
+- The IMAGE is immutable: `ghcr.io/reihlinstinct/geni-uploader@sha256:...`
   always means the same bytes. The uploader code lives ONLY in the image.
 - Your REPO (`GENI_UPLOAD_REPO`) is cloned fresh into an in-memory tmpfs
   on every run and supplies data: the upload manifest, the scanned files,
@@ -140,7 +140,7 @@ Rules enforced by the loader (it fails loudly, before any network call):
       -e GENI_UPLOAD_EXPECT_SHA=<full-40-char-sha> \
       -v ~/.gh-token:/run/gh-token:ro,Z \
       -v ~/.geni-token:/run/geni-token:ro,Z \
-      quay.io/reihlinstinct/geni-uploader@sha256:<pinned-digest> \
+      ghcr.io/reihlinstinct/geni-uploader@sha256:<pinned-digest> \
       --token-file /run/geni-token plan \
       --manifest packages/my-batch/upload-manifest.yaml
 
@@ -171,7 +171,7 @@ Only after a clean plan:
       -e GENI_UPLOAD_EXPECT_SHA=<full-40-char-sha> \
       -v ~/.gh-token:/run/gh-token:ro,Z \
       -v ~/.geni-token:/run/geni-token:ro,Z \
-      quay.io/reihlinstinct/geni-uploader@sha256:<pinned-digest> \
+      ghcr.io/reihlinstinct/geni-uploader@sha256:<pinned-digest> \
       --token-file /run/geni-token run \
       --manifest packages/my-batch/upload-manifest.yaml \
       --confirm YES

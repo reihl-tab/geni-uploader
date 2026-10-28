@@ -19,8 +19,24 @@ Safety model:
 - Logs never contain tokens, headers, payloads, or personal names/titles
   (items are logged as short hashes).
 """
-import argparse, base64, fcntl, hashlib, http.client, json, os, subprocess, sys, tempfile, time, urllib.error
-import urllib.parse, urllib.request
+import argparse
+import base64
+import fcntl
+import hashlib
+import http.client
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+import plan_report
+import visual_plan
 
 # GENI_API_BASE overrides the API root for end-to-end tests against a local
 # fake server ONLY: it requires GENI_UPLOAD_E2E=1 and a loopback URL, so an
@@ -82,7 +98,9 @@ class RunLog:
     API response payloads. Default file sits next to the state file so it
     survives on the same durable mount; share it when reporting a problem."""
     def __init__(self, path=None):
-        self.f = open(path, "a", encoding="utf-8") if path else None
+        # Held open for the whole run and closed in close(): a context
+        # manager cannot span the run loop.
+        self.f = open(path, "a", encoding="utf-8") if path else None  # noqa: SIM115
 
     def log(self, msg):
         line = f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {msg}"
@@ -94,6 +112,27 @@ class RunLog:
     def close(self):
         if self.f:
             self.f.close()
+
+
+def render_description(item):
+    """Require an author-declared English section; do not guess its language.
+
+    Mechanical checks reject missing prose, URL-only and non-Latin-only text.
+    They are not language detection: the author/reviewer owns the translation.
+    Legacy description text is an optional supplementary section, never a
+    substitute for description_en. Only the rendered description is sent.
+    """
+    english = item.get("description_en")
+    if not isinstance(english, str) or not english.strip():
+        raise ApiError("description_en is required for every source")
+    english = english.strip()
+    prose = re.sub(r"https?://\S+", "", english)
+    if len(re.findall(r"\b[A-Za-z]{2,}\b", prose)) < 3:
+        raise ApiError("description_en must contain English prose, not only a URL or name")
+    extra = item.get("description")
+    if extra is not None and (not isinstance(extra, str) or not extra.strip()):
+        raise ApiError("supplementary description must be nonempty text")
+    return english + ("\n\n" + extra.strip() if extra else "")
 
 
 def load_manifest(path):
@@ -143,6 +182,7 @@ def load_manifest(path):
                         raise ApiError(f"target #{i} {kind}[{j}]: file not found: "
                                        f"{item['file']}")
                     item["file"] = real
+                render_description(item)  # fail before any network request
                 extra = item.get("also_tag")
                 if extra is not None:
                     if not isinstance(extra, list) or not extra or \
@@ -280,6 +320,9 @@ def verify_linkage(token, pid, kind, expect_anchor, log):
     budget = 13  # immediate read + twelve 30s intervals; rate limiter still applies
     for i in range(budget):
         listing = list_tagged(token, pid, kind)
+        if expect_anchor and expect_anchor[0] == "object-id":
+            ids = sum(1 for x in listing or [] if x and x[0] == "object-id")
+            log.log(f"    readback shape: available={listing is not None} object_ids={ids}")
         if listing is not None and expect_anchor in listing:
             return True
         log.log(f"    readback {i + 1}/{budget}: not yet visible in {kind} listing")
@@ -342,13 +385,21 @@ def observed_response_keys(p):
     carrying any personal data even into the encrypted log."""
     if not isinstance(p, dict):
         return json.dumps({"_type": type(p).__name__})
-    out = {"keys": sorted(str(k) for k in p.keys())}
+    out = {"keys": sorted(str(k) for k in p)}
     r = p.get("results")
     if r is not None:
         out["results_type"] = type(r).__name__
         if isinstance(r, (list, dict)):
             out["results_len"] = len(r)
     return json.dumps(out, sort_keys=True)
+
+
+def profile_node_number(value):
+    """Canonical numeric portion of a served API profile node, never a GUID."""
+    node = str(value or "").removeprefix("profile-")
+    if not node.isdigit():
+        raise ApiError("invalid served profile node ID")
+    return node
 
 
 def verify_profile(token, pid, expect_name):
@@ -388,7 +439,7 @@ def verify_profile(token, pid, expect_name):
                            "matches the expected name - target SKIPPED "
                            f"(observed name fields: {observed_name_fields(p)}; "
                            f"response keys: {observed_response_keys(p)})")
-        return pid, name
+        return pid, name or profile_name_surface(p)
     g = execute("GET", "profile", f"{API_BASE}/profile-g{pid}", token)
     gobj = g
     if isinstance(gobj, dict) and isinstance(gobj.get("results"), list):
@@ -397,15 +448,38 @@ def verify_profile(token, pid, expect_name):
             and str(gobj.get("guid") or "") == pid
             and str(gobj.get("id") or "")
             and name_matches(profile_name_surface(gobj), expect_name)):
-        return str(gobj["id"]), gobj.get("display_name") or ""
+        return (profile_node_number(gobj["id"]),
+                gobj.get("display_name") or profile_name_surface(gobj))
     raise ApiError(f"profile {pid}: not served as a node id and not "
                    "resolvable as a guid (profile-g) with a matching "
                    "identity - target SKIPPED")
 
 
+def source_listing_rows(response, kind):
+    """Normalize documented collections and a strictly typed singleton."""
+    if isinstance(response, list):
+        rows = response
+    elif isinstance(response, dict) and "error" not in response:
+        if "results" in response:
+            rows = response["results"]
+        else:
+            base = "document" if kind == "documents" else "photo"
+            oid = str(response.get("id") or "").removeprefix(base + "-")
+            if (not oid.isascii() or not oid.isdigit()
+                    or not all(isinstance(response.get(k), str) for k in ("guid", "title", "url"))
+                    or not isinstance(response.get("tags"), list)):
+                raise ApiError("invalid singleton source listing")
+            rows = [response]
+    else:
+        raise ApiError("invalid profile source listing")
+    if not isinstance(rows, list) or any(not isinstance(x, dict) or "error" in x for x in rows):
+        raise ApiError("invalid profile source listing")
+    return rows
+
+
 def list_tagged(token, pid, kind):
     """Set of idempotency anchors already tagged to the profile.
-    documents: (title, source_url); photos: (title,)."""
+    Legacy anchors plus (object-id, typed kind, numeric id) for durable proof."""
     ek = "profile_documents" if kind == "documents" else "profile_photos"
     url = f"{API_BASE}/profile-{pid}/{kind}"
     items = []
@@ -413,14 +487,28 @@ def list_tagged(token, pid, kind):
     try:
         while url and pages < 10:
             res = execute("GET", ek, url, token)
-            items.extend(res.get("results", res if isinstance(res, list) else []))
-            url = res.get("next") if isinstance(res, dict) else None
+            rows = source_listing_rows(res, kind)
+            items.extend(rows)
+            links = [res.get(k) for k in ("next", "next_page") if res.get(k)] if isinstance(res, dict) else []
+            if any(not isinstance(x, str) for x in links):
+                raise ApiError("invalid listing pagination")
+            if len(set(links)) > 1:
+                raise ApiError("conflicting listing pagination")
+            url = links[0] if links else None
+            if url:
+                if not isinstance(url, str):
+                    raise ApiError("invalid listing pagination")
+                url = urllib.parse.urljoin(f"{API_BASE}/profile-{pid}/{kind}", url)
+                parsed = urllib.parse.urlsplit(url)
+                allowed = urllib.parse.urlsplit(f"{API_BASE}/profile-{pid}/{kind}")
+                if (parsed.scheme, parsed.netloc, parsed.path) != (allowed.scheme, allowed.netloc, allowed.path) or parsed.fragment:
+                    raise ApiError("listing pagination changed endpoint")
             pages += 1
         if url:
             return None  # pagination incomplete: treat as unavailable
     except ThrottledError:
         raise  # never suppress rate limits as an unavailable photo listing
-    except ApiError as e:
+    except ApiError:
         if kind == "photos":
             return None  # listing unavailable: fall back to state file + warning
         raise
@@ -429,6 +517,10 @@ def list_tagged(token, pid, kind):
         if isinstance(d, dict):
             out.add((d.get("title"), d.get("source_url")) if kind == "documents"
                     else (d.get("title"),))
+            base = "document" if kind == "documents" else "photo"
+            value = str(d.get("id") or "").removeprefix(base + "-")
+            if value.isascii() and value.isdigit():
+                out.add(("object-id", base, value))
     return out
 
 
@@ -437,8 +529,8 @@ def anchor(item, kind):
 
 
 def upload_payload(item, kind):
-    data = {"title": item["title"]}
-    for k in ("description", "source_url", "labels", "date", "text"):
+    data = {"title": item["title"], "description": render_description(item)}
+    for k in ("source_url", "labels", "date", "text"):
         if item.get(k):
             data[k] = str(item[k])
     if item.get("file"):
@@ -453,8 +545,11 @@ def upload_payload(item, kind):
 
 def load_state(path):
     if os.path.isfile(path):
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (ValueError, OSError) as exc:
+            raise ApiError("state file cannot be read; manual review required") from exc
     return {"uploaded": []}
 
 
@@ -471,16 +566,21 @@ def status_path(manifest_path):
     return os.path.join(os.path.dirname(os.path.abspath(manifest_path)), STATUS_NAME)
 
 
-def load_status(manifest_path):
+def load_status(manifest_path, strict=False):
     """Repo-backed per-item completion record, written next to the manifest.
     Items recorded here are treated as done by every future run, anywhere."""
     import yaml
     path = status_path(manifest_path)
     if os.path.isfile(path):
-        with open(path, encoding="utf-8") as f:
-            d = yaml.safe_load(f)
+        try:
+            with open(path, encoding="utf-8") as f:
+                d = yaml.safe_load(f)
+        except (yaml.YAMLError, OSError) as exc:
+            raise ApiError("status file cannot be read; manual review required") from exc
         if isinstance(d, dict) and isinstance(d.get("items"), dict):
             return d
+        if strict:
+            raise ApiError("status file has invalid structure; manual review required")
     return {"items": {}}
 
 
@@ -500,7 +600,7 @@ def repo_sync(manifest_path, log):
     try:
         cwd = os.path.dirname(os.path.abspath(manifest_path))
         top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=cwd,
-                             capture_output=True, text=True, timeout=30)
+                             capture_output=True, text=True, timeout=30, check=False)
         if top.returncode != 0:
             log.log("  repo sync: not inside a git repo; status kept in the "
                     "local file only")
@@ -517,7 +617,7 @@ def repo_sync(manifest_path, log):
                             "commit", "-q", "-m", "geni-upload: checkpoint source progress"],
                            cwd=top, check=True, capture_output=True, timeout=30)
         push = subprocess.run(["git", "push"], cwd=top, capture_output=True,
-                              text=True, timeout=120)
+                              text=True, timeout=120, check=False)
         if push.returncode != 0:
             log.log("  repo sync: PUSH FAILED (read-only token or remote moved); "
                     "STOP; pending journal must be reconciled before further writes")
@@ -672,7 +772,28 @@ def cmd_contrast(args):
 
 
 def cmd_plan(args):
+    summary = plan_report.report("plan")
+    visual = visual_plan.new()
+    try:
+        return _cmd_plan(args, summary, visual)
+    finally:
+        plan_report.save(summary)
+        visual_plan.save(visual)
+
+
+def _cmd_plan(args, summary, visual):
+    visual_ok = True
     m = load_manifest(args.manifest)
+    summary["counts"] = plan_report.upload_counts(m)
+    summary["checks"]["schema"] = "pass"
+    summary["checks"]["preconditions"] = "pass"
+    status = load_status(args.manifest, strict=True)
+    state = load_state(getattr(args, "state", STATE_DEFAULT))
+    if (not isinstance(state, dict)
+            or not isinstance(state.get("uploaded", []), list)
+            or not isinstance(state.get("uncertain", []), list)
+            or not isinstance(state.get("pending", {}), dict)):
+        raise ApiError("state file has invalid structure; manual review required")
     token = get_token(args)
     # No verdict up front: VERIFIED is decided only AFTER every profile GET
     # actually succeeded (a 401 must never print under a VERIFIED header).
@@ -682,22 +803,64 @@ def cmd_plan(args):
     if not token:
         print("verification: SKIPPED - no token; nothing was checked against Geni")
         return 0
+    summary["checks"]["identity"] = "fail"
+    summary["checks"]["listing"] = "pass"
     total = len(m["targets"])
     failed = 0
     for t in m["targets"]:
+        row = visual_plan.profile(visual)
         pid = str(t["profile_id"])
         try:
             node_id, name = verify_profile(token, pid, t["expect_name"])
+            row["identity"] = "confirmed"
             via = " (resolved via guid)" if node_id != pid else ""
             print(f"  profile {pid}: OK ({name}){via}")
             for kind in ("documents", "photos"):
+                items = t.get(kind) or []
+                if not items:
+                    print(f"    {kind}: no proposed sources; listing not required")
+                    continue
                 tagged = list_tagged(token, node_id, kind)
                 if tagged is None:
-                    print(f"    WARNING: {kind} listing unavailable; "
-                          "idempotency relies on state file only")
-                    continue
-                for item in t.get(kind) or []:
-                    if anchor(item, kind) in tagged:
+                    summary["checks"]["listing"] = "fail"
+                    print(f"    WARNING: required {kind} listing unavailable; NOT READY")
+                for item in items:
+                    key = f"{pid}:{kind}:{item['title']}"
+                    rec = status["items"].get(key) or {}
+                    local_pending = state.get("pending", {}).get(key)
+                    if local_pending:
+                        rec = {"blocked": True}
+                    if not isinstance(rec, dict):
+                        rec = {"blocked": True}
+                    present = tagged is not None and anchor(item, kind) in tagged
+                    recorded_done = (rec.get("status") in ("uploaded", "resolved")
+                                     or key in state.get("uploaded", []))
+                    blocked = (rec.get("status") not in
+                               (None, "not_found", "uploaded", "resolved")
+                               or (key in state.get("uncertain", [])
+                                   and rec.get("status") not in
+                                   ("not_found", "uploaded", "resolved"))
+                               or rec.get("blocked") or (rec.get("create_intent")
+                                                          and not recorded_done))
+                    if blocked:
+                        verdict = "BLOCKED journal/status requires review"
+                        summary["checks"]["preconditions"] = "fail"
+                    elif tagged is None:
+                        verdict = "UNKNOWN duplicate/completion unconfirmed; listing unavailable"
+                    elif recorded_done and not present:
+                        verdict = "BLOCKED recorded done but absent from listing"
+                        summary["checks"]["preconditions"] = "fail"
+                    elif present:
+                        verdict = "SKIP already present in server listing"
+                    else:
+                        verdict = "NEW absent from server listing; no blocking status"
+                    try:
+                        visual_plan.source(row, kind, verdict.split()[0].lower())
+                    except ValueError:
+                        visual_ok = False  # optional visual cannot replace plan outcome
+                    print(f"    source {item['title']!r}: schema/file=pass; "
+                          f"target=pass; duplicate/status={verdict}")
+                    if present and not blocked:
                         print(f"    SKIP (already tagged): {item['title']}")
         except ThrottledError:
             raise  # throttle aborts the whole plan: no further requests
@@ -708,9 +871,15 @@ def cmd_plan(args):
         print(f"verification: FAILED - {failed} of {total} profile(s) not "
               "confirmed; resolve before `run` (no writes were attempted)")
         return 1
+    summary["checks"]["identity"] = "pass"
+    summary["complete"] = True
+    visual["complete"] = visual_ok
     print(f"verification: OK - all {total} profile(s) confirmed with Geni")
+    ready = all(v in ("pass", "not_required")
+                for v in summary["checks"].values())
+    print("source guards: " + ("PASS" if ready else "NOT READY"))
     print("No writes performed in plan mode.")
-    return 0
+    return 0 if ready else 1
 
 
 def durable_upload(item, kind, base, add_kind, tag_kind, pid, node_id,
@@ -730,11 +899,12 @@ def durable_upload(item, kind, base, add_kind, tag_kind, pid, node_id,
         sort_keys=True).encode()).hexdigest()
     rec = status["items"].get(key)
     if rec and rec.get("journal_version") == 1:
-        if rec.get("binding") != binding or rec.get("primary_node") != node_id:
+        if (rec.get("binding") != binding
+                or profile_node_number(rec.get("primary_node")) != node_id):
             raise ApiError("pending source/target precondition changed; manual review required")
-        if rec.get("blocked"):
-            raise UncertainWrite("journal blocked after an interrupted mutation/identity check; "
-                                 "explicit reviewed reconciliation required")
+        # Accept only exactly equivalent legacy node representation.
+        # Preserve every object ID and operation phase; never clear an intent.
+        rec["primary_node"] = node_id
     else:
         rec = {"journal_version": 1, "status": "pending", "binding": binding,
                "primary_node": node_id, "object_id": None, "tags": {},
@@ -747,6 +917,38 @@ def durable_upload(item, kind, base, add_kind, tag_kind, pid, node_id,
         save_status(manifest_path, status)
         if sync_repo and repo_sync(manifest_path, log) is not True:
             raise ApiError("durable journal push failed; STOP before further mutations")
+
+    if rec.get("blocked"):
+        tags = rec.get("tags")
+        oid = str(rec.get("object_id") or "")
+        if (rec.get("reconcile_readback") is not True
+                or rec.get("reason") != "interrupted target/tag"
+                or rec.get("create_intent") is not True
+                or not oid.isascii() or not oid.isdigit()
+                or not isinstance(tags, dict) or pid not in tags
+                or any(target not in [pid] + extras or not isinstance(tag, dict)
+                       or tag.get("phase") not in ("acknowledged", "verified")
+                       for target, tag in tags.items())):
+            raise UncertainWrite("journal blocked; reviewed acknowledged-tag reconciliation required")
+        # Proof phase is read-only. Do not edit phases or unblock incrementally.
+        for target, tag in tags.items():
+            if target == pid:
+                served = node_id
+            else:
+                xt = targets_by_pid.get(target)
+                if xt is None:
+                    raise UncertainWrite("reconciliation target absent; block retained")
+                served, _ = verify_profile(token, target, xt["expect_name"])
+            if profile_node_number(tag.get("node")) != served:
+                raise UncertainWrite("reconciliation target changed; block retained")
+            if not verify_linkage(token, served, kind, ("object-id", base, oid), log):
+                raise VerificationError("reconciliation tag not proven; block retained")
+        rec.pop("blocked")
+        rec.pop("reason")
+        rec.pop("reconcile_readback")
+        rec["status"] = "pending"
+        checkpoint()  # failure stops BEFORE further service mutations
+        log.log("  acknowledged-tag reconciliation proven by GET; journal checkpointed")
 
     if not rec.get("object_id"):
         if rec.get("create_intent"):
@@ -778,8 +980,10 @@ def durable_upload(item, kind, base, add_kind, tag_kind, pid, node_id,
                     raise ApiError("extra target missing; manual review required")
                 served, _ = verify_profile(token, target, xt["expect_name"])
             tag = rec["tags"].get(target)
-            if tag and tag.get("node") != served:
+            if tag and profile_node_number(tag.get("node")) != served:
                 raise ApiError("journal target identity changed; manual review required")
+            if tag:
+                tag["node"] = served
             if not tag:
                 tag = {"node": served, "phase": "intent"}
                 rec["tags"][target] = tag
@@ -788,7 +992,7 @@ def durable_upload(item, kind, base, add_kind, tag_kind, pid, node_id,
                         f"{API_BASE}/{base}-{oid}/tag/profile-{served}", token, {})
                 tag["phase"] = "acknowledged"
                 checkpoint()
-            if not verify_linkage(token, served, kind, anchor(item, kind), log):
+            if not verify_linkage(token, served, kind, ("object-id", base, str(oid)), log):
                 raise VerificationError("source tag not visible; durable pending journal retained; "
                                         "next run verifies only, never recreates or repeats this tag")
             tag["phase"] = "verified"
@@ -802,6 +1006,7 @@ def durable_upload(item, kind, base, add_kind, tag_kind, pid, node_id,
         rec["status"] = "uncertain"
         rec["blocked"] = True
         rec["reason"] = "429" if isinstance(exc, ThrottledError) else "interrupted target/tag"
+        log.log(f"  target/tag stop category: {type(exc).__name__}")
         checkpoint()
         if isinstance(exc, ThrottledError):
             raise
@@ -924,7 +1129,9 @@ def cmd_run(args):
         return 1
     lock_path = os.path.join(os.path.dirname(os.path.abspath(args.state)),
                              ".geni-upload.lock")
-    lock_fd = open(lock_path, "w")
+    # The flock must be held until the process exits; a with-block would
+    # release it after acquisition.
+    lock_fd = open(lock_path, "w")  # noqa: SIM115
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -936,7 +1143,6 @@ def cmd_run(args):
     log = RunLog(log_path)
     log.log(f"run start: manifest={args.manifest} state={args.state} "
             f"log={log_path} smoke={bool(args.smoke)}")
-    rc = 0
     try:
         m = load_manifest(args.manifest)
         state = load_state(args.state)
@@ -1184,6 +1390,65 @@ def cmd_pguid(args):
     print("No writes performed.")
     return 0
 
+def listing_shape(response):
+    """Bounded value-free structural summary; unknown key names may be PII."""
+    known = {"results", "next", "next_page", "prev_page", "page", "total_count",
+             "id", "guid", "title", "source_url", "url", "tags", "error"}
+    def shape(value):
+        out = {"type": type(value).__name__}
+        if isinstance(value, (list, dict)):
+            out["count"] = len(value)
+        if isinstance(value, dict):
+            out["keys"] = sorted(k for k in value if k in known)
+            out["unknown_keys"] = sum(k not in known for k in value)
+            out["field_types"] = {k: type(value[k]).__name__ for k in out["keys"]}
+        return out
+    out = {"response": shape(response)}
+    rows = response.get("results") if isinstance(response, dict) else response
+    out["results"] = shape(rows)
+    if isinstance(rows, list):
+        out["entry_types"] = {name: sum(type(x).__name__ == name for x in rows)
+                              for name in sorted({type(x).__name__ for x in rows})}
+        out["entries_sample"] = [shape(x) for x in rows[:3]]
+    candidates = rows if isinstance(rows, list) else [response] if isinstance(response, dict) else []
+    out["tags_samples"] = []
+    for candidate in candidates[:3]:
+        if isinstance(candidate, dict) and "tags" in candidate:
+            tags = candidate["tags"]
+            item = {"container": shape(tags)}
+            if isinstance(tags, list):
+                item["entry_types"] = {name: sum(type(x).__name__ == name for x in tags)
+                                       for name in sorted({type(x).__name__ for x in tags})}
+                item["entries_sample"] = [shape(x) for x in tags[:3]]
+            out["tags_samples"].append(item)
+    return out
+
+
+def cmd_listing_shape(args):
+    token = get_token(args)
+    if not token:
+        raise ApiError("listing-shape requires a token")
+    manifest = load_manifest(args.manifest)
+    for index, target in enumerate(manifest["targets"]):
+        kinds = [kind for kind in ("documents", "photos") if target.get(kind)]
+        if not kinds:
+            continue
+        try:
+            node, _ = verify_profile(token, str(target["profile_id"]), target["expect_name"])
+            for kind in kinds:
+                endpoint = "profile_documents" if kind == "documents" else "profile_photos"
+                response = execute("GET", endpoint, f"{API_BASE}/profile-{node}/{kind}", token)
+                print(json.dumps({"target_index": index, "kind": kind,
+                                  "shape": listing_shape(response)}, sort_keys=True))
+        except ThrottledError:
+            raise
+        except ApiError:
+            print(json.dumps({"target_index": index, "error": "identity-or-listing-failed"}))
+            return 1
+    print("listing-shape complete: first pages only; no writes, no pagination")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--token-file", help="file outside the repo holding the access token")
@@ -1196,7 +1461,7 @@ def main():
     p = sub.add_parser("whoami"); p.set_defaults(fn=cmd_whoami)
     for name, fn in (("plan", cmd_plan), ("run", cmd_run),
                      ("contrast", cmd_contrast), ("guidmap", cmd_guidmap),
-                     ("pguid", cmd_pguid)):
+                     ("pguid", cmd_pguid), ("listing-shape", cmd_listing_shape)):
         p = sub.add_parser(name); p.add_argument("--manifest", required=True)
         p.set_defaults(fn=fn)
     sub.choices["run"].add_argument("--confirm", default="")
@@ -1205,7 +1470,8 @@ def main():
             "--log", default=None,
             help="diagnostic log file (run default: geni-upload-run.log next to "
                  "the state file; plan default: stdout only)")
-    sub.choices["run"].add_argument("--state", default=STATE_DEFAULT)
+    for name in ("plan", "run"):
+        sub.choices[name].add_argument("--state", default=STATE_DEFAULT)
     sub.choices["run"].add_argument("--smoke", action="store_true",
                                     help="upload only the first item, then stop")
     sub.choices["run"].add_argument("--no-repo-sync", action="store_true",
