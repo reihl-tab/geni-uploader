@@ -1,4 +1,5 @@
 """Decision-record consistency only, not implementation or live authority."""
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -43,3 +44,36 @@ def test_each_decision_keeps_its_own_boundary(section, phrases):
 def test_core_decision_claims_are_individually_required(section, claim):
     part = ' '.join(TEXT.split('## ' + section + '\n', 1)[1].split('\n## ', 1)[0].split())
     assert claim in part
+
+
+def test_permanent_separation_and_every_release_blocker():
+    permanent = ' '.join(TEXT.split('## Permanent intent is independent\n', 1)[1]
+                         .split('\n## ', 1)[0].split())
+    assert ('Permanent owner-global consumption belongs in the separately approved shared '
+            'Durable Object state, not in artifacts or Git evidence retention alone.') in permanent
+    release = ' '.join(TEXT.split('## Remaining release work\n', 1)[1].split())
+    for blocker in (
+        'Authenticated exact approval-record creation/review',
+        'live issuer/subject and claim shape verification',
+        'reviewed private writer access',
+        'approved permanent DO namespace/authentication',
+        'ciphertext serialization/retention/remote verification',
+        'actual one-shot secondary HTTP adapter',
+        'readback/reconciliation', '#244 provenance',
+        'protected environment audit', 'immutable release pins', 'named release approval',
+        'Then exact private father payload/risk/run approval and protected human gate.',
+        'This record supplies none of these permissions or deployed capabilities.',
+    ):
+        assert blocker in release
+
+
+# Lock every reviewed decision sentence, not only selected phrases. This is a
+# textual approval pin, NOT behavioral proof. Intentional doc changes require
+# explicit review of this expected digest, not automatic fixture regeneration.
+SECTION_DIGESTS = {'Decision 1: protected job, immutable private approval record': '7ac4d75070764b46948b507252bcb9cf1b56146724cc7a82b36bbb73b2eb692a', 'Decision 2: bounded ciphertext in existing private data storage': '07a4bd3f04cb7c239650f8cccc513f7029fe68138b5df0916f2c8814c1d9da99', 'Permanent intent is independent': '22632543e8fed4a7507110e4d2c4ee7424807a26d3be19774b0d94b52c6b5231', 'Free-only execution boundary and tradeoffs': 'ffe093e18886f9fa73513a2377098c1047c2e172b7d36dff9e04bdee070d6e24', 'Remaining release work': '82917198851256de42a90484becbd3fce7562da25357bf66fe613f9b8a31d9ff'}
+
+
+@pytest.mark.parametrize(('section', 'expected'), SECTION_DIGESTS.items())
+def test_entire_reviewed_section_sentence_pin(section, expected):
+    part = ' '.join(TEXT.split('## ' + section + '\n', 1)[1].split('\n## ', 1)[0].split())
+    assert sha256(part.encode()).hexdigest() == expected
