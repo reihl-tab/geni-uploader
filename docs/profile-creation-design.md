@@ -129,6 +129,7 @@ flowchart TD
   J[Resume with durable acknowledged ID; no fresh receipt needed] --> B
   B -->|unverifiable| T[Stop, GET-only resume; no create retry]
   B -->|verified| N[Persist verified result]
+  N -->|next intent| E
 ```
 
 ## Durable state and git branches
@@ -200,11 +201,10 @@ or alternative implementation is authorized by this design:
 - An active branch ruleset targets all branches except the exact provisioned state
   ref, written as the complete literal `refs/heads/<state-name>` with no wildcard
   in the exclusion. Here `<state-name>` is a placeholder: replace it with the
-    provisioned branch's literal name, not angle brackets or a pattern. It
-  enables Restrict creations, Restrict updates and Restrict
-    deletions. The operator principal has no bypass through user, team, role,
-  app or inherited rules.
-  This covers the default branch, other protected branches and new alternate refs.
+  provisioned branch's literal name, not angle brackets or a pattern. It enables
+  Restrict creations, Restrict updates and Restrict deletions. The operator
+  principal has no bypass through user, team, role, app or inherited rules. This
+  covers the default branch, other protected branches and new alternate refs.
 - A separate active ruleset targets the exact state ref. It enables Restrict
   deletions and Block force pushes, with no bypass for the operator principal.
   Normal fast-forward state pushes remain allowed. Neither run nor recovery may
@@ -218,17 +218,27 @@ or alternative implementation is authorized by this design:
   Inspect effective rules for both the exact state ref and the default ref, plus
   the complete active ruleset definitions, include/exclude conditions, inherited
   rules and bypass lists. Record ruleset IDs, update timestamps/history entries
-    and principal/role evidence in the private receipt. Use each ruleset's
-  `updated_at` or its history
-  entry, not an assumed version field. `current_user_can_bypass` describes the
-  identity making that audit request only; it does not prove the run principal's
+  and principal/role evidence in the private receipt. Use each ruleset's
+  `updated_at` or its history entry, not an assumed version field.
+    `current_user_can_bypass` describes the identity making that audit request
+  only; it does not prove the run principal's
   non-bypass status. Check that principal and all its effective memberships
-    separately. Recheck that evidence before POST; changes stop the run. Do not
+  separately. Recheck that evidence before POST; changes stop the run. Do not
   infer an empty bypass list from a response that omits it.
 - The contents-only run credential may not expose complete ruleset/bypass metadata.
-  Use a separate read-only audit identity with the access required to inspect it,
-  never grant administration permission to the run credential. If the account plan
-  lacks enforceable private-repository rulesets, the audit identity cannot inspect
+  A nominally read-only audit identity is not sufficient evidence: GitHub may
+  omit bypass actors unless the auditor can write the ruleset. No audit credential
+  or permission level has yet been proved sufficient for this baseline. On a
+  personal private repository, the owner may be the only qualifying auditor and
+  may also be the run principal, defeating the assumed identity separation.
+  Therefore this baseline remains blocked until a separate reviewed audit design
+  establishes the exact auditor identity, least required permissions and complete
+  bypass/principal evidence. Do not claim Administration: read is sufficient or
+  infer completeness from omitted fields. An owner-signed evidence snapshot plus
+  per-operation ruleset ID/update checks is a possible separate design, not an
+  implemented substitute. Never grant administration to the run credential. If
+    the account plan lacks enforceable private-repository rulesets, the audit
+  identity cannot inspect
   all relevant definitions or principal memberships, or the required coverage and
   non-bypass status cannot be verified, production is blocked. No test push, force
   push or deletion is used as a permissions probe.
