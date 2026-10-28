@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 
+from human_parent_gate import require_production_release
 from parent_probe import protected_file
 from parent_runner import payloads
 from people_core import Blocked, digest, exact, require, validate, warnings
@@ -104,7 +105,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}code{overflow-wra
 
 
 def apply(*args, **kwargs):
-    raise Blocked('production parent apply disabled; human plan and vendor proofs required')
+    require_production_release()
 
 
 def main(argv=None):

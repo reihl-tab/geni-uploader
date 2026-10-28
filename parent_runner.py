@@ -1,6 +1,7 @@
 """Offline parent-operation simulation. No production transport or entry point."""
 import copy
 
+from human_parent_gate import require_production_release
 from people_core import Blocked, bind, digest, exact, require, validate
 
 
@@ -90,4 +91,4 @@ def resume_synthetic(journal, owner, operation, transport):
 
 
 def run_production(*args, **kwargs):
-    raise Blocked('production parent runner disabled; vendor and owner proofs required')
+    require_production_release()
