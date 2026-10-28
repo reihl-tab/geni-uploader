@@ -8,6 +8,10 @@ bytes are real ciphertext, that the recipient can decrypt them, that the object
 is privately retained, who uploaded it, or any authority. Header screening only
 rejects obviously plaintext-shaped data. Caps are candidate values pending
 reviewed real-schema/encryption-overhead validation (docs/intent-storage-decisions.md).
+
+check_bytes and verify_readback do not compare stage, operation, run or
+recipient with any expected value; the caller pins those. The prefix screen
+falsely rejects about 1.17 % of uniformly random objects (docs/ciphertext-evidence.md).
 """
 import hashlib
 import re

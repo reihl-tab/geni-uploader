@@ -14,14 +14,8 @@ COMMIT = 'c' * 40
 
 
 def blob(n=64, seed=b'ZZ'):
-    """Deterministic binary bytes that do not look like plaintext."""
-    out = b''
-    i = 0
-    while len(out) < n:
-        out += hashlib.sha256(seed + i.to_bytes(4, 'big')).digest()
-        i += 1
-    data = b'\x00\xff' + out[:n - 2] if n >= 2 else out[:n]
-    return data
+    """Deterministic binary bytes that do not look like plaintext (linear time)."""
+    return (b'\x00\xff' + hashlib.shake_256(seed).digest(max(n - 2, 0)))[:n]
 
 
 def desc(data, stage='pre_write', **changes):
@@ -225,3 +219,88 @@ def test_validate_ledger_alone_rejects_duplicates_and_foreign_recipient():
     foreign['objects'][0]['recipient'] = 'e' * 64
     with pytest.raises(Blocked):
         ce.validate_ledger(foreign)
+
+
+# #277 follow-ups: each guard isolated; candidate caps pinned independently.
+
+MIB = 1024 * 1024
+
+
+def test_candidate_caps_pinned_independently():
+    assert ce.OBJECT_CAP == 1 * MIB
+    assert ce.OPERATION_CAP == 8 * MIB
+
+
+def fake_ledger(sizes, **object_changes):
+    """A ledger of synthetic descriptors with distinct ids; validate_ledger alone."""
+    led = ledger()
+    for i, size in enumerate(sizes):
+        item = desc(blob(), byte_length=size, sha256=f'{i + 1:064x}', blob_id=f'{i + 1:040x}')
+        led['objects'].append(item | object_changes)
+    led['total_bytes'] = sum(sizes)
+    return led
+
+
+def test_validate_ledger_alone_operation_cap_boundary():
+    at_cap = fake_ledger([MIB] * 8)
+    assert ce.validate_ledger(at_cap)['total_bytes'] == 8 * MIB
+    with pytest.raises(Blocked):
+        ce.validate_ledger(fake_ledger([MIB] * 8 + [1]))
+
+
+@pytest.mark.parametrize('printable,rejected', [(900, False), (949, False), (950, True),
+                                                (990, True)])
+def test_printable_ratio_threshold(printable, rejected):
+    data = b'a' * printable + b'\x01' * (1000 - printable)
+    if rejected:
+        with pytest.raises(Blocked):
+            ce.check_bytes(desc(data), data)
+    else:
+        assert ce.check_bytes(desc(data), data)['byte_length'] == 1000
+
+
+@pytest.mark.parametrize('prefix', [b'%PDF', b'-----BEGIN', b'[', b'{', b'<', b'PK\x03\x04',
+                                    b'\xef\xbb\xbf'])
+def test_each_prefix_rejected_with_binary_tail(prefix):
+    tail = b'\xff\xfe' + blob(62)  # not valid UTF-8: only the prefix rule can block
+    data = prefix + tail
+    with pytest.raises(Blocked):
+        ce.check_bytes(desc(data), data)
+    assert ce.check_bytes(desc(b'\x00' + data), b'\x00' + data)  # same bytes, no prefix
+
+
+def test_validate_ledger_duplicate_sha_only_and_blob_only():
+    sha_dup = fake_ledger([10, 10])
+    sha_dup['objects'][1]['sha256'] = sha_dup['objects'][0]['sha256']
+    blob_dup = fake_ledger([10, 10])
+    blob_dup['objects'][1]['blob_id'] = blob_dup['objects'][0]['blob_id']
+    for bad in (sha_dup, blob_dup):
+        with pytest.raises(Blocked):
+            ce.validate_ledger(bad)
+    assert ce.validate_ledger(fake_ledger([10, 10]))['total_bytes'] == 20
+
+
+def test_validate_ledger_per_object_operation_binding():
+    led = fake_ledger([10, 10])
+    led['objects'][1]['operation_binding'] = 'f' * 64
+    with pytest.raises(Blocked):
+        ce.validate_ledger(led)
+
+
+def test_run_id_length_boundary():
+    data = blob()
+    assert ce.check_bytes(desc(data, run_id='9' * 20), data)['run_id'] == '9' * 20
+    with pytest.raises(Blocked):
+        ce.validate_descriptor(desc(data, run_id='9' * 21))
+    with pytest.raises(Blocked):
+        ce.new_ledger(OP, '9' * 21, RCPT)
+
+
+@pytest.mark.parametrize('field,value', [('run_id', 1234567890), ('run_id', None),
+                                         ('run_id', b'1234567890'), ('objects', ()),
+                                         ('objects', {}), ('objects', None)])
+def test_validate_ledger_types(field, value):
+    led = ledger()
+    led[field] = value
+    with pytest.raises(Blocked):
+        ce.validate_ledger(led)
