@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from people_core import Blocked
 import parent_plan
+from people_core import Blocked
 
 ROOT = Path(__file__).resolve().parents[1]
 
