@@ -52,13 +52,19 @@ test("late probe readiness is rejected and remaining budget is clamped", async (
   let clock = 0;
   const f = fixture();
   f.now = () => clock;
-  f.readPort = async () => { clock = 59900; return "9911\nZZ"; };
+  f.readPort = async () => { clock = Math.max(clock, 59900); return "9911\nZZ"; };
+  // #274: record budgets instead of asserting inside probe (a throw there is
+  // swallowed by the retry loop), and let sleep advance the same clock, so a
+  // broken clamp fails promptly instead of looping forever.
+  const budgets = [];
   f.probe = async (_, budget) => {
-    assert.equal(budget, 100);
+    budgets.push(budget);
     clock += 900;
     return [{ type: "page", webSocketDebuggerUrl: "ws://127.0.0.1:9911/ZZ" }];
   };
+  f.sleep = async (ms) => { clock += ms; };
   await assert.rejects(waitForChrome(f), /readiness timeout/);
+  assert.deepEqual(budgets, [100]);
 });
 
 test("truncated numeric port does not probe and final sleep is clamped", async () => {
@@ -158,5 +164,31 @@ test("exit during readiness is not reported as ready", async () => {
     if (stage === "readPort") f.readPort = async () => { gone = true; return read(); };
     else f.probe = async (...args) => { gone = true; return probe(...args); };
     await assert.rejects(waitForChrome(f), /exited before readiness/);
+  }
+});
+
+
+// #276: each guard isolated so neighbouring validation cannot mask its removal.
+
+test("a non-page target listed first is skipped for the page target", async () => {
+  const f = fixture();
+  const page = { type: "page", webSocketDebuggerUrl: "ws://127.0.0.1:9911/devtools/page/ZZpage" };
+  f.probe = async () => [
+    { type: "service_worker", webSocketDebuggerUrl: "ws://127.0.0.1:9911/devtools/page/ZZsw" },
+    page,
+  ];
+  const result = await waitForChrome(f);
+  assert.equal(result.page, page);
+});
+
+test("the probe budget is clamped to 1000 ms and to the remaining time", async () => {
+  for (const [timeoutMs, expected] of [[60000, 1000], [500, 500]]) {
+    const f = fixture();
+    f.timeoutMs = timeoutMs;
+    const budgets = [];
+    const probe = f.probe;
+    f.probe = async (port, budget) => { budgets.push(budget); return probe(port, budget); };
+    await waitForChrome(f);
+    assert.deepEqual(budgets, [expected]);
   }
 });
