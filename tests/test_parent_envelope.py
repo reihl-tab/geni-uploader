@@ -104,3 +104,36 @@ def test_bool_schema_is_not_integer_schema():
     envelope = p.draft(plan, value)
     envelope['schema_version'] = True
     with pytest.raises(Blocked): p.review(envelope, plan, value, 1100)
+
+
+@pytest.mark.parametrize('field,bad', [('journal_version', False), ('count', 2.0),
+                                     ('created', 1000.0), ('expires', 1900.0)])
+@pytest.mark.parametrize('rehash', [False, True])
+def test_candidate_numeric_type_tamper_cannot_pass_equality(field, bad, rehash):
+    plan, value = fixture()
+    envelope = p.draft(plan, value)
+    envelope['binding'][field] = bad
+    if rehash:
+        envelope['envelope_hash'] = digest({k: v for k, v in envelope.items() if k != 'envelope_hash'})
+    with pytest.raises(Blocked): p.review(envelope, plan, value, 1100)
+
+
+@pytest.mark.parametrize('field,bad', [('readiness', 'unknown'), ('duplicate_status', 'unknown'),
+                                     ('action', 'delete_person')])
+def test_rehashed_proposal_entry_semantics_not_trusted(field, bad):
+    plan, value = fixture()
+    plan['entries'][0][field] = bad
+    plan['proposal_hash'] = digest({k: v for k, v in plan.items() if k != 'proposal_hash'})
+    with pytest.raises(Blocked): p.draft(plan, value)
+
+
+@pytest.mark.parametrize('field,bad', [('public', True), ('gender', 'unknown'),
+                                     ('names', None), ('first_name', 'ZZtampered')])
+def test_rehashed_payload_cannot_evade_manifest_binding(field, bad):
+    plan, value = fixture()
+    entry = plan['entries'][0]
+    entry['proposed_payload'][field] = bad
+    entry['payload_hash'] = digest(entry['proposed_payload'])
+    value['payload_hashes'][0] = entry['payload_hash']
+    plan['proposal_hash'] = digest({k: v for k, v in plan.items() if k != 'proposal_hash'})
+    with pytest.raises(Blocked): p.draft(plan, value)

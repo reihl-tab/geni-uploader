@@ -78,8 +78,11 @@ def review(envelope, proposal, expected_binding, now):
     for key in ('signature_verified', 'source_authenticated', 'replay_enforced', 'creation_enabled'):
         require(envelope[key] is False)
     require(type(now) is int)
+    binding(envelope['binding'])
+    basis = {key: value for key, value in envelope.items() if key != 'envelope_hash'}
+    require(envelope['envelope_hash'] == digest(basis))
     expected = draft(proposal, expected_binding)
-    require(envelope == expected)
+    require(digest(envelope) == digest(expected))
     require(expected['binding']['created'] <= now < expected['binding']['expires'])
     return {'status': 'offline_binding_matches_only', 'envelope_hash': expected['envelope_hash'],
             'signature_verified': False, 'source_authenticated': False,
