@@ -75,3 +75,54 @@ def test_observed_parent_count_is_not_completeness():
     assert result['observed_parent_count'] == 1 and result['hidden_parent_completeness'] == 'unknown'
     data['family']['nodes'][uid] = {**union, 'partners': []}
     assert parse(data, OWNER)['graph_status'] == 'unknown'
+
+
+@pytest.mark.parametrize('target', ['owner-node', 'parent-node', 'focus-no-id', 'unknown-self',
+                                  'unknown-owner', 'missing-focus-id'])
+def test_all_graph_merge_signals_and_unknown_fields_preserved(target):
+    data = copy.deepcopy(BASE)
+    if target == 'owner-node':
+        data['family']['nodes'][OWNER]['merged_into'] = 'profile-99555'
+    if target == 'parent-node':
+        data['family']['nodes']['profile-99222'] = {
+            'id': 'profile-99222', 'merged_into': 'profile-99555'}
+    if target in ('focus-no-id', 'missing-focus-id'):
+        data['family']['focus'].pop('id')
+        if target == 'focus-no-id': data['family']['focus']['merge_pending'] = True
+    if target.startswith('unknown-'):
+        data[target.split('-')[1]]['ZZunknown'] = True
+    result = parse(data, OWNER)
+    expected = 'blocked' if target in ('owner-node', 'parent-node', 'focus-no-id') else 'unknown'
+    assert result['merge_status'] == expected and result['create_enabled'] is False
+
+
+@pytest.mark.parametrize('unions', [[[1]], [None], ['ZZinvalid']])
+def test_non_object_union_is_value_free_blocked(unions):
+    data = copy.deepcopy(BASE)
+    data['unions'] = unions
+    with pytest.raises(Blocked): parse(data, OWNER)
+
+
+def test_total_input_budget_is_bounded():
+    data = copy.deepcopy(BASE)
+    data['family']['nodes'] = {f'profile-{99123+i}': {'id': f'profile-{99123+i}',
+                              'names': {'en': {'first_name': 'ZZPerson'}}}
+                              for i in range(101)}
+    with pytest.raises(Blocked): parse(data, OWNER)
+    # Small per-container limits still cannot multiply into an unbounded tree.
+    data = copy.deepcopy(BASE)
+    data['family']['ZZnested'] = [['ZZleaf']*100 for _ in range(100)]
+    with pytest.raises(Blocked): parse(data, OWNER)
+
+
+def test_counted_parent_merge_target_is_still_blocked():
+    data = copy.deepcopy(BASE)
+    parent, uid = 'profile-99222', 'union-99111'
+    union = {'id': uid, 'partners': [parent], 'children': [OWNER],
+             'adopted_children': [], 'foster_children': [], 'merge_pending': False}
+    data['family']['nodes'].update({parent: {'id': parent, 'merged_into': 'profile-99555'},
+                                  uid: {k: v for k, v in union.items() if k != 'merge_pending'}})
+    data['unions'] = [{k: v for k, v in union.items() if k != 'merge_pending'}]
+    result = parse(data, OWNER)
+    assert result['observed_parent_count'] == 1
+    assert result['merge_status'] == 'blocked' and result['create_enabled'] is False

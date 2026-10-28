@@ -8,17 +8,20 @@ def identifier(value, kind='profile'):
     return type(value) is str and re.fullmatch(kind + r'-[0-9]{1,30}', value) is not None
 
 
-def bounded(value, depth=0):
-    require(depth <= 8)
+def bounded(value, depth=0, budget=None):
+    if budget is None:
+        budget = [2000]
+    budget[0] -= 1
+    require(depth <= 8 and budget[0] >= 0)
     if type(value) is dict:
         require(len(value) <= 100)
         for key, leaf in value.items():
             require(type(key) is str and len(key) <= 100)
-            bounded(leaf, depth + 1)
+            bounded(leaf, depth + 1, budget)
     elif type(value) is list:
         require(len(value) <= 100)
         for leaf in value:
-            bounded(leaf, depth + 1)
+            bounded(leaf, depth + 1, budget)
     else:
         require(value is None or type(value) in (str, bool, int))
         if type(value) is str:
@@ -36,25 +39,48 @@ def parse(snapshot, expected_owner):
     bounded(snapshot)
     require(type(snapshot) is dict)
     require(set(snapshot) == {'self', 'owner', 'family', 'unions'})
+    require(type(snapshot['unions']) is list
+            and len(snapshot['unions']) <= 10
+            and all(type(value) is dict for value in snapshot['unions']))
     statuses = []
     for key in ('self', 'owner'):
         value = snapshot[key]
         require(type(value) is dict and value.get('id') == expected_owner
                 and not set(value) & {'results', 'error'})
         statuses.append(merge_status(value))
+        if not set(value) <= PROFILE_FIELDS:
+            statuses.append('unknown')
     family = snapshot['family']
     graph = 'unknown'
     count = None
     if type(family) is dict:
         focus = family.get('focus')
-        if type(focus) is dict and 'id' in focus:
-            require(focus['id'] == expected_owner)
+        if type(focus) is dict:
             statuses.append(merge_status(focus))
+            if 'id' in focus:
+                require(focus['id'] == expected_owner)
+            else:
+                statuses.append('unknown')
+            if not set(focus) <= PROFILE_FIELDS:
+                statuses.append('unknown')
+        else:
+            statuses.append('unknown')
+        nodes = family.get('nodes')
+        if type(nodes) is dict:
+            for value in nodes.values():
+                if type(value) is dict:
+                    statuses.append(merge_status(value))
+                else:
+                    statuses.append('unknown')
+        else:
+            statuses.append('unknown')
         try:
             count = observed_parents(snapshot, expected_owner)
             graph = 'observed_consistent_not_complete'
         except Blocked:
             pass
+    else:
+        statuses.append('unknown')
     return {'schema_version': 1, 'kind': 'unauthenticated_offline_snapshot_review',
             'snapshot_hash': digest(snapshot), 'owner_id_matches': True,
             'merge_status': ('blocked' if 'blocked' in statuses else
@@ -75,14 +101,18 @@ def merge_status(value):
     return 'unknown'
 
 
+PROFILE_FIELDS = {'id', 'guid', 'first_name', 'middle_name', 'last_name', 'maiden_name',
+                  'names', 'public', 'is_alive', 'merge_pending', 'merged_into', 'unions'}
+
+
 def observed_parents(snapshot, owner):
     family = snapshot['family']
     require(set(family) == {'focus', 'nodes'})
     require(type(family['focus']) is dict and family['focus'].get('id') == owner)
     nodes, unions = family['nodes'], snapshot['unions']
-    require(type(nodes) is dict and type(unions) is list)
-    allowed = {'id', 'guid', 'first_name', 'middle_name', 'last_name', 'maiden_name',
-               'names', 'public', 'is_alive', 'merge_pending', 'merged_into', 'unions'}
+    require(type(nodes) is dict and len(nodes) <= 100
+            and type(unions) is list and len(unions) <= 10)
+    allowed = PROFILE_FIELDS
     union_fields = {'id', 'partners', 'children', 'adopted_children', 'foster_children'}
     for value in (snapshot['self'], snapshot['owner'], family['focus']):
         require(set(value) <= allowed)
