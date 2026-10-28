@@ -965,3 +965,6 @@ test('secondary-only rollout hides and rejects primary and tertiary including in
 
 // Storage-only candidate tests, no Worker route or binding.
 import "./create-intent-candidate.test.mjs";
+
+// Offline workload JWT validation with synthetic keys only.
+import "./intent-workload-verifier.test.mjs";
