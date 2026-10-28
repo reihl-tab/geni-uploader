@@ -47,7 +47,10 @@ def proposal(data, pins):
 
 
 def verify_proposal(value):
-    require(type(value) is dict and 'proposal_hash' in value)
+    exact(value, ('schema_version', 'kind', 'owner', 'operator',
+                  'approval_as_supplied_not_authenticated', 'manifest_hash', 'pins', 'entries',
+                  'blockers', 'warnings', 'creation_enabled', 'live_checks_performed',
+                  'approval_grants_write', 'proposal_hash'))
     expected = value['proposal_hash']
     basis = {k: v for k, v in value.items() if k != 'proposal_hash'}
     require(type(expected) is str and expected == digest(basis))

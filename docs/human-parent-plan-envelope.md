@@ -11,7 +11,11 @@ hash, scope-bound proof content references, immutable data/executor/image pins,
 journal version, 256-bit-shaped Plan identifier, count at most two and lifetime
 at most 15 minutes. Draft creation binds the proposal's owner, operator, hashes
 and pins. Review compares every field against separate supplied expectations,
-checks expiry and rejects altered content even if its hash is recomputed.
+checks expiry and rejects a candidate differing from those supplied expectations,
+even if its hash is recomputed. Each candidate's strict schema and own content
+hash are checked first. The proposal is rebuilt canonically from its supplied
+fields to check entry scope, payload/main-name equality and manifest consistency.
+That does not verify the original manifest's source, truth or approval.
 
 All references are untrusted input. Their shape and binding are checked, not
 source truth, signature, sufficiency or current remote state. A reference hash

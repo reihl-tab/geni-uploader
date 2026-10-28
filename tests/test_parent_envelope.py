@@ -137,3 +137,14 @@ def test_rehashed_payload_cannot_evade_manifest_binding(field, bad):
     value['payload_hashes'][0] = entry['payload_hash']
     plan['proposal_hash'] = digest({k: v for k, v in plan.items() if k != 'proposal_hash'})
     with pytest.raises(Blocked): p.draft(plan, value)
+
+
+@pytest.mark.parametrize('change', ['extra-proposal', 'extra-entry', 'anchor', 'payload-hash'])
+def test_proposal_exact_schema_anchor_and_payload_hash(change):
+    plan, value = fixture()
+    if change == 'extra-proposal': plan['permit'] = True
+    if change == 'extra-entry': plan['entries'][0]['permit'] = True
+    if change == 'anchor': plan['entries'][0]['anchor'] = '99555'
+    if change == 'payload-hash': plan['entries'][0]['payload_hash'] = 'f'*64
+    plan['proposal_hash'] = digest({k: v for k, v in plan.items() if k != 'proposal_hash'})
+    with pytest.raises(Blocked): p.draft(plan, value)
