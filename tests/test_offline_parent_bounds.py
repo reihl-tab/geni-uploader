@@ -36,7 +36,8 @@ def test_valid_hash_bytes_unchanged():
     assert digest(value) == expected
 
 
-def test_proposal_render_envelope_never_network_or_subprocess(monkeypatch):
+@pytest.fixture
+def offline_guard(monkeypatch):
     def deny(*a, **k): pytest.fail('offline operation attempted process or network')
     for target, name in [(socket, 'socket'), (subprocess, 'run'), (subprocess, 'Popen'),
                          (urllib.request, 'urlopen'), (urllib.request.OpenerDirector, 'open'),
@@ -46,6 +47,9 @@ def test_proposal_render_envelope_never_network_or_subprocess(monkeypatch):
         if name in ('system', 'popen', 'startfile') or name.startswith(
                 ('exec', 'spawn', 'fork', 'posix_spawn')):
             monkeypatch.setattr(os, name, deny)
+
+
+def test_proposal_render_envelope_never_network_or_subprocess(offline_guard):
     plan, value = fixture()  # also constructs and validates a proposal
     assert '<html' in parent_plan.render(plan)
     envelope = parent_envelope.draft(plan, value)
@@ -60,3 +64,37 @@ def test_cli_nested_json_fixed_failure(tmp_path, capsys):
     assert parent_plan.main(['--manifest-file', str(manifest), '--pins-file', str(pins),
                              '--output-dir', str(tmp_path/'out')]) == 1
     assert capsys.readouterr().out == 'parent-plan blocked; review protected inputs\n'
+
+
+@pytest.mark.parametrize('name', ['fork', 'forkpty', 'posix_spawn', 'posix_spawnp',
+                                  'startfile', 'popen', 'system', 'execv', 'execve', 'execl', 'spawnv', 'spawnl'])
+def test_each_process_guard_is_exercised_without_real_process(name, monkeypatch, request):
+    # Install harmless sentinel even on platforms missing the API. If the guard
+    # omits a helper, the sentinel returns rather than launching any process.
+    monkeypatch.setattr(os, name, lambda *a, **k: 'ZZ-unguarded', raising=False)
+    request.getfixturevalue('offline_guard')
+    with pytest.raises(pytest.fail.Exception, match='offline operation attempted'):
+        getattr(os, name)('ZZ-synthetic')
+
+
+@pytest.mark.parametrize('name', ['run', 'Popen'])
+def test_subprocess_guards_exercised(name, monkeypatch, request):
+    monkeypatch.setattr(subprocess, name, lambda *a, **k: 'ZZ-unguarded')
+    request.getfixturevalue('offline_guard')
+    with pytest.raises(pytest.fail.Exception, match='offline operation attempted'):
+        getattr(subprocess, name)('ZZ-synthetic')
+
+
+def test_exact_hash_depth_boundary_32_allowed_33_blocked():
+    allowed = 0
+    for _ in range(32):
+        allowed = [allowed]
+    assert digest(allowed) == hashlib.sha256(json.dumps(allowed, separators=(',', ':')).encode()).hexdigest()
+    with pytest.raises(Blocked):
+        digest([allowed])
+
+
+def test_local_consumption_doc_whole_file_pin():
+    from pathlib import Path
+    text = (Path(__file__).resolve().parents[1] / 'docs/human-parent-local-consumption.md').read_text()
+    assert hashlib.sha256(' '.join(text.split()).encode()).hexdigest() == '0c34bc584ca5fe19e89afbff210f97c55062532d00f53b252d9742de5993864d'
