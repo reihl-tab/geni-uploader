@@ -7,6 +7,11 @@ live OAuth test belongs in this directory. Existing local-copy callback is uncha
 This worker must not be deployed until independent security review and human
 approval, then verified identity-gate/logging/secrets setup.
 
+Current additions: see [CONNECTIONS.md](CONNECTIONS.md) for isolated owner pins
+and the explicitly gated discovery-only mode. The original setup description
+below is historical where it says no profile lookup; pinned connections and
+discovery now perform the fixed identity GET described there.
+
 ## Shape
 
 GitHub OAuth login is the identity gate, with no requested scopes and S256 PKCE.
