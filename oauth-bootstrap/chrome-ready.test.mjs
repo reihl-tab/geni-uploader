@@ -52,13 +52,19 @@ test("late probe readiness is rejected and remaining budget is clamped", async (
   let clock = 0;
   const f = fixture();
   f.now = () => clock;
-  f.readPort = async () => { clock = 59900; return "9911\nZZ"; };
+  f.readPort = async () => { clock = Math.max(clock, 59900); return "9911\nZZ"; };
+  // #274: record budgets instead of asserting inside probe (a throw there is
+  // swallowed by the retry loop), and let sleep advance the same clock, so a
+  // broken clamp fails promptly instead of looping forever.
+  const budgets = [];
   f.probe = async (_, budget) => {
-    assert.equal(budget, 100);
+    budgets.push(budget);
     clock += 900;
     return [{ type: "page", webSocketDebuggerUrl: "ws://127.0.0.1:9911/ZZ" }];
   };
+  f.sleep = async (ms) => { clock += ms; };
   await assert.rejects(waitForChrome(f), /readiness timeout/);
+  assert.deepEqual(budgets, [100]);
 });
 
 test("truncated numeric port does not probe and final sleep is clamped", async () => {

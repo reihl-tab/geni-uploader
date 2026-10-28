@@ -15,6 +15,19 @@ function fakeSocket() {
   };
 }
 
+// Bounded: a removed rejection fails within the guard instead of hanging to the job cap.
+async function rejectsWithin(promise, ms = 500) {
+  let timer;
+  const guard = new Promise((resolve) => {
+    timer = setTimeout(() => resolve("pending past guard"), ms);
+  });
+  const outcome = await Promise.race([
+    promise.then(() => "resolved", (error) => error), guard]);
+  clearTimeout(timer);
+  assert.ok(outcome instanceof Error, "expected a rejection, got: " + String(outcome));
+  return outcome;
+}
+
 const settled = (promise) => Promise.race([
   promise.then(() => "resolved"),
   new Promise((r) => setTimeout(() => r("pending"), 20)),
@@ -54,11 +67,18 @@ test("navigation errors and missing ids fail closed", async () => {
   for (const result of [{ frameId: "F1", loaderId: "N", errorText: "net::ERR_FAILED" },
     { frameId: "F1" }, { loaderId: "N" }, {}]) {
     const ws = fakeSocket();
-    await assert.rejects(navigateAndWaitForLoad(ws, async () => result, "https://127.0.0.1:1/x"));
+    await rejectsWithin(navigateAndWaitForLoad(ws, async () => result, "https://127.0.0.1:1/x"));
     assert.equal(ws.count(), 0);
   }
 });
 
+
+test("rejectsWithin fails promptly on a never-settling promise (#274)", async () => {
+  const started = Date.now();
+  await assert.rejects(rejectsWithin(new Promise(() => {}), 50), /expected a rejection/);
+  await assert.rejects(rejectsWithin(Promise.resolve(1), 50), /expected a rejection, got: resolved/);
+  assert.ok(Date.now() - started < 1000);
+});
 
 // #276: errorText and id-type guards isolated. Each case emits the matching load
 // first, so a removed guard resolves (and fails the assertion) instead of hanging.
