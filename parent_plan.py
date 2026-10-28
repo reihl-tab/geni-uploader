@@ -155,7 +155,7 @@ def main(argv=None):
                 os.fsync(stream.fileno())
         print('parent-plan draft saved privately; live checks absent; apply disabled')
         return 0
-    except (Blocked, OSError, ValueError, TypeError):
+    except (Blocked, OSError, ValueError, TypeError, RecursionError):
         print('parent-plan blocked; review protected inputs')
         return 1
 
