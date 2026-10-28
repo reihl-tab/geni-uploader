@@ -163,3 +163,35 @@ def test_database_busy_is_fixed_blocked(tmp_path):
     with pytest.raises(p.Blocked, match='journal unavailable'):
         b.transition('99123', 0, 'ZZop', 'a'*64, 'b'*64, 'intent')
     a.db.execute('ROLLBACK'); a.close(); b.close()
+
+
+@pytest.mark.parametrize('receipt', [None, [], 'ZZreceipt', 1, {}])
+def test_bind_rejects_non_receipt(receipt):
+    with pytest.raises(p.Blocked): p.bind(DATA, receipt, R, 1100)
+
+
+@pytest.mark.parametrize('error', [sqlite3.OperationalError, sqlite3.DatabaseError,
+                                  sqlite3.IntegrityError])
+def test_init_database_errors_are_blocked(monkeypatch, error):
+    def fail(*args, **kwargs):
+        raise error('ZZprivate error')
+    monkeypatch.setattr(p.sqlite3, 'connect', fail)
+    with pytest.raises(p.Blocked, match='journal unavailable'): p.Journal('ZZpath')
+
+
+def test_resume_database_error_is_blocked(tmp_path):
+    j = journal(tmp_path / 'journal')
+    j.db.execute('DROP TABLE events')
+    with pytest.raises(p.Blocked, match='journal unavailable'): j.resume('99123', 'ZZop')
+    j.close()
+
+
+def test_transition_integrity_error_is_blocked_and_rolled_back(tmp_path):
+    j = journal(tmp_path / 'journal')
+    j.db.execute("CREATE TRIGGER ZZreject BEFORE INSERT ON events "
+                 "BEGIN SELECT RAISE(ABORT,'ZZprivate error'); END")
+    with pytest.raises(p.Blocked, match='journal unavailable'):
+        j.transition('99123', 0, 'ZZop', 'a'*64, 'b'*64, 'intent')
+    assert not j.db.in_transaction
+    assert j.db.execute('SELECT COUNT(*) FROM events').fetchone()[0] == 0
+    j.close()

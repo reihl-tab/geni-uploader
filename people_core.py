@@ -115,6 +115,7 @@ def check_receipt(receipt, expected, now):
 
 def bind(data, receipt, expected, now):
     validated = validate(data)
+    exact(receipt, RECEIPT_KEYS)
     require(receipt.get('manifest_hash') == digest(validated))
     require(receipt.get('count') == len(validated['parents'])
             and receipt.get('owner') == validated['owner']['node'])
@@ -128,21 +129,26 @@ class Journal:
     New manifest hashes never hide old intents. No reset or delete interface.
     """
     def __init__(self, path):
-        self.db = sqlite3.connect(path, isolation_level=None)
-        self.db.execute('PRAGMA synchronous=FULL')
-        self.db.execute('PRAGMA busy_timeout=2000')
-        self.db.executescript('''
-          CREATE TABLE IF NOT EXISTS owners(owner TEXT PRIMARY KEY, version INTEGER NOT NULL);
-          CREATE TABLE IF NOT EXISTS events(
-            owner TEXT NOT NULL, version INTEGER NOT NULL, operation TEXT NOT NULL,
-            manifest TEXT NOT NULL, payload TEXT NOT NULL, phase TEXT NOT NULL,
-            object_id TEXT, receipt TEXT NOT NULL, run_id TEXT NOT NULL,
-            attempt INTEGER NOT NULL, anchor TEXT NOT NULL, PRIMARY KEY(owner,version));
-          CREATE TRIGGER IF NOT EXISTS immutable_update BEFORE UPDATE ON events
-            BEGIN SELECT RAISE(ABORT,'immutable journal'); END;
-          CREATE TRIGGER IF NOT EXISTS immutable_delete BEFORE DELETE ON events
-            BEGIN SELECT RAISE(ABORT,'immutable journal'); END;
-        ''')
+        try:
+            self.db = sqlite3.connect(path, isolation_level=None)
+            self.db.execute('PRAGMA synchronous=FULL')
+            self.db.execute('PRAGMA busy_timeout=2000')
+            self.db.executescript('''
+              CREATE TABLE IF NOT EXISTS owners(owner TEXT PRIMARY KEY, version INTEGER NOT NULL);
+              CREATE TABLE IF NOT EXISTS events(
+                owner TEXT NOT NULL, version INTEGER NOT NULL, operation TEXT NOT NULL,
+                manifest TEXT NOT NULL, payload TEXT NOT NULL, phase TEXT NOT NULL,
+                object_id TEXT, receipt TEXT NOT NULL, run_id TEXT NOT NULL,
+                attempt INTEGER NOT NULL, anchor TEXT NOT NULL, PRIMARY KEY(owner,version));
+              CREATE TRIGGER IF NOT EXISTS immutable_update BEFORE UPDATE ON events
+                BEGIN SELECT RAISE(ABORT,'immutable journal'); END;
+              CREATE TRIGGER IF NOT EXISTS immutable_delete BEFORE DELETE ON events
+                BEGIN SELECT RAISE(ABORT,'immutable journal'); END;
+            ''')
+        except sqlite3.DatabaseError as exc:
+            if hasattr(self, 'db'):
+                self.db.close()
+            raise Blocked('journal unavailable; review durable state') from exc
 
     def close(self):
         self.db.close()
@@ -199,9 +205,12 @@ class Journal:
                             'DO UPDATE SET version=excluded.version', (owner, version + 1))
             self.db.execute('COMMIT')
             return version + 1
-        except sqlite3.OperationalError as exc:
-            if self.db.in_transaction:
-                self.db.execute('ROLLBACK')
+        except sqlite3.DatabaseError as exc:
+            try:
+                if self.db.in_transaction:
+                    self.db.execute('ROLLBACK')
+            except sqlite3.DatabaseError:
+                pass
             raise Blocked('journal unavailable; review durable state') from exc
         except BaseException:
             if self.db.in_transaction:
@@ -209,10 +218,13 @@ class Journal:
             raise
 
     def resume(self, owner, operation):
-        row = self.db.execute('SELECT phase,object_id FROM events WHERE owner=? AND operation=? '
-                              'ORDER BY version DESC LIMIT 1', (owner, operation)).fetchone()
-        require(row is not None and row[0] in {'acknowledged', 'verified'})
-        return {'action': 'get_only', 'object_id': row[1]}
+        try:
+            row = self.db.execute('SELECT phase,object_id FROM events WHERE owner=? AND operation=? '
+                                  'ORDER BY version DESC LIMIT 1', (owner, operation)).fetchone()
+            require(row is not None and row[0] in {'acknowledged', 'verified'})
+            return {'action': 'get_only', 'object_id': row[1]}
+        except sqlite3.DatabaseError as exc:
+            raise Blocked('journal unavailable; review durable state') from exc
 
 
 def production_adapter(*args, **kwargs):

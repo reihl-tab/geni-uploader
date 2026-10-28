@@ -58,3 +58,11 @@ corruption, not a database administrator who can drop triggers or rewrite files.
 A bounded busy timeout becomes a fixed Blocked error. Text fields require NFC and
 reject controls, DEL and format/bidi characters. Duplicate/same-gender parent
 names/genders produce review warnings, not guesses about vendor slot behavior.
+
+The journal accepts a new payload hash under an already-used manifest only after
+prior operations are verified. This is safe only when the caller derives each
+payload deterministically from that validated manifest; arbitrary payload hashes
+are not an authorization boundary. `Journal.owner` is free text, not a validated
+vendor ID. The coordinator must supply the canonical validated owner/anchor and
+must not use alternate owner strings to evade its lock. Database failures in
+initialization, transition and resume map to a fixed Blocked error.
