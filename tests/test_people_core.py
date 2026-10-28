@@ -1,5 +1,7 @@
 """Synthetic only; no Geni transport exists in this core."""
 import copy
+import sqlite3
+from functools import partial
 
 import pytest
 
@@ -67,10 +69,10 @@ def test_receipt_hash_and_canonical_input():
 
 def test_monotonic_durable_cas_and_get_only_resume(tmp_path):
     path = tmp_path / 'journal'
-    j = p.Journal(path)
+    j = journal(path)
     assert j.transition('99123', 0, 'ZZop', 'a'*64, 'b'*64, 'intent') == 1
     j.close()  # crash/restart preserves intent, never replay
-    j = p.Journal(path)
+    j = journal(path)
     with pytest.raises(p.Blocked): j.resume('99123', 'ZZop')
     with pytest.raises(p.Blocked): j.transition('99123', 1, 'ZZnew', 'c'*64, 'd'*64, 'intent')
     with pytest.raises(p.Blocked): j.transition('99123', 1, 'ZZop', 'a'*64, 'b'*64, 'intent')
@@ -83,11 +85,81 @@ def test_monotonic_durable_cas_and_get_only_resume(tmp_path):
 
 
 def test_concurrent_stale_version_and_blocked_operation(tmp_path):
-    a = p.Journal(tmp_path / 'journal')
-    b = p.Journal(tmp_path / 'journal')
+    a = journal(tmp_path / 'journal')
+    b = journal(tmp_path / 'journal')
     a.transition('99123', 0, 'ZZop', 'a'*64, 'b'*64, 'intent')
     with pytest.raises(p.Blocked): b.transition('99123', 0, 'ZZrace', 'c'*64, 'd'*64, 'intent')
     a.transition('99123', 1, 'ZZop', 'a'*64, 'b'*64, 'blocked')
     with pytest.raises(p.Blocked): b.transition('99123', 2, 'ZZnewhash', 'c'*64, 'd'*64, 'intent')
     assert not hasattr(a, 'reset') and not hasattr(a, 'delete')
     a.close(); b.close()
+
+
+B = {'receipt': 'e'*64, 'run_id': '991', 'attempt': 1, 'anchor': '99123'}
+
+
+def journal(path):
+    j = p.Journal(path)
+    j.transition = partial(j.transition, binding=B)
+    return j
+
+
+def test_bind_manifest_count_owner_and_hash():
+    assert p.bind(DATA, R, R, 1100) == p.digest(R)
+    for field, value in [('count', 2), ('owner', '99124'), ('manifest_hash', 'e'*64)]:
+        r = {**R, field: value}
+        with pytest.raises(p.Blocked): p.bind(DATA, r, r, 1100)
+
+
+@pytest.mark.parametrize('value', ['ZZ\x7f', 'ZZ\u202e', 'ZZ\u200d', 'e\u0301'])
+def test_text_rejects_controls_formats_and_non_nfc(value):
+    with pytest.raises(p.Blocked): p.text(value)
+
+
+@pytest.mark.parametrize('changes', [{'expires': 1901}, {'count': 0}, {'count': 3}])
+def test_invalid_receipt_window_and_count(changes):
+    r = {**R, **changes}
+    with pytest.raises(p.Blocked): p.check_receipt(r, r, 1100)
+
+
+def test_terminal_duplicate_and_raw_tamper(tmp_path):
+    j = journal(tmp_path / 'journal')
+    j.transition('99123', 0, 'ZZop', 'a'*64, 'b'*64, 'intent')
+    with pytest.raises(p.Blocked): j.transition('99123', 1, 'ZZop', 'a'*64, 'b'*64, 'acknowledged')
+    j.transition('99123', 1, 'ZZop', 'a'*64, 'b'*64, 'acknowledged', '99222')
+    j.transition('99123', 2, 'ZZop', 'a'*64, 'b'*64, 'verified', '99222')
+    with pytest.raises(p.Blocked): j.transition('99123', 3, 'ZZnew', 'a'*64, 'b'*64, 'intent')
+    with pytest.raises(p.Blocked): j.transition('99123', 3, 'ZZop', 'a'*64, 'b'*64, 'blocked', '99222')
+    for sql in ['UPDATE events SET phase="intent"', 'DELETE FROM events']:
+        with pytest.raises(sqlite3.IntegrityError): j.db.execute(sql)
+    j.db.execute('UPDATE owners SET version=99')
+    with pytest.raises(p.Blocked): j.transition('99123', 99, 'ZZnew', 'a'*64, 'c'*64, 'intent')
+    j.close()
+
+
+def test_binding_mismatch_and_blocked_resume(tmp_path):
+    j = journal(tmp_path / 'journal')
+    j.transition('99123', 0, 'ZZop', 'a'*64, 'b'*64, 'intent')
+    with pytest.raises(p.Blocked):
+        j.transition('99123', 1, 'ZZop', 'a'*64, 'b'*64, 'acknowledged', '99222',
+                     binding={**B, 'attempt': 2})
+    j.transition('99123', 1, 'ZZop', 'a'*64, 'b'*64, 'blocked')
+    with pytest.raises(p.Blocked): j.resume('99123', 'ZZop')
+    j.close()
+
+
+def test_parent_review_warnings():
+    d = copy.deepcopy(DATA)
+    d['parents'][0]['gender'] = 'female'
+    d['parents'].append({**copy.deepcopy(d['parents'][0]), 'local_id': 'ZZOther'})
+    assert len(p.warnings(d)) == 2
+
+
+def test_database_busy_is_fixed_blocked(tmp_path):
+    a = journal(tmp_path / 'journal')
+    b = journal(tmp_path / 'journal')
+    b.db.execute('PRAGMA busy_timeout=1')
+    a.db.execute('BEGIN IMMEDIATE')
+    with pytest.raises(p.Blocked, match='journal unavailable'):
+        b.transition('99123', 0, 'ZZop', 'a'*64, 'b'*64, 'intent')
+    a.db.execute('ROLLBACK'); a.close(); b.close()

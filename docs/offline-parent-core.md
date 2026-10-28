@@ -37,3 +37,24 @@ selection and explicit privacy readback. Current-user endpoint discovery is
 publicly documented but its concrete production response must still be validated.
 Broader relative creation, dates, images, invitations, edits, merges and deletion
 are not implemented. No capability release or live creation is implied by this PR.
+
+## Review hardening
+
+`bind(data, receipt, expected, now)` orders schema validation, canonical manifest
+hash comparison, count/owner comparison and full receipt/time binding. Journal
+transitions separately bind receipt digest, run ID/attempt and anchor. They do not
+replace this binder or independently authenticate a receipt. Integration must call
+both under the reviewed coordinator.
+
+The lock is per canonical owner/anchor, not per manifest or operation name: any
+unverified intent blocks all new owner operations. Even a verified parent cannot
+be created again with the same manifest/payload hash under a fresh operation ID.
+New receipt/attempt bindings cannot take over an old operation. Acknowledged
+GET-only resume does not authorize another POST or alter the original binding.
+
+SQLite triggers reject UPDATE/DELETE of events, and transitions require the
+owner version to equal the highest event version. This catches common raw-state
+corruption, not a database administrator who can drop triggers or rewrite files.
+A bounded busy timeout becomes a fixed Blocked error. Text fields require NFC and
+reject controls, DEL and format/bidi characters. Duplicate/same-gender parent
+names/genders produce review warnings, not guesses about vendor slot behavior.

@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import unicodedata
 
 
 class Blocked(ValueError):
@@ -21,7 +22,8 @@ def exact(value, keys):
 
 def text(value, limit=160):
     require(type(value) is str and 0 < len(value.strip()) <= limit
-            and not any(ord(c) < 32 for c in value))
+            and unicodedata.normalize('NFC', value) == value
+            and not any(unicodedata.category(c).startswith('C') for c in value))
 
 
 def digest(value):
@@ -69,6 +71,18 @@ def validate(data):
     return data
 
 
+def warnings(data):
+    validate(data)
+    parents = data['parents']
+    result = []
+    if len(parents) == 2:
+        if parents[0]['names'] == parents[1]['names']:
+            result.append('duplicate parent names require review')
+        if parents[0]['gender'] == parents[1]['gender'] != 'unknown':
+            result.append('same-gender parents require slot semantics review')
+    return result
+
+
 RECEIPT_KEYS = ('manifest_hash', 'data_sha', 'owner', 'graph_hash', 'state_version',
                 'workflow_sha', 'image_digest', 'job_workflow_ref', 'run_id',
                 'run_attempt', 'created', 'expires', 'count')
@@ -99,6 +113,14 @@ def check_receipt(receipt, expected, now):
     return digest(receipt)
 
 
+def bind(data, receipt, expected, now):
+    validated = validate(data)
+    require(receipt.get('manifest_hash') == digest(validated))
+    require(receipt.get('count') == len(validated['parents'])
+            and receipt.get('owner') == validated['owner']['node'])
+    return check_receipt(receipt, expected, now)
+
+
 class Journal:
     """Local synthetic CAS prototype, not the deployed service or an auth layer.
 
@@ -108,19 +130,31 @@ class Journal:
     def __init__(self, path):
         self.db = sqlite3.connect(path, isolation_level=None)
         self.db.execute('PRAGMA synchronous=FULL')
+        self.db.execute('PRAGMA busy_timeout=2000')
         self.db.executescript('''
           CREATE TABLE IF NOT EXISTS owners(owner TEXT PRIMARY KEY, version INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS events(
             owner TEXT NOT NULL, version INTEGER NOT NULL, operation TEXT NOT NULL,
             manifest TEXT NOT NULL, payload TEXT NOT NULL, phase TEXT NOT NULL,
-            object_id TEXT, PRIMARY KEY(owner,version));
+            object_id TEXT, receipt TEXT NOT NULL, run_id TEXT NOT NULL,
+            attempt INTEGER NOT NULL, anchor TEXT NOT NULL, PRIMARY KEY(owner,version));
+          CREATE TRIGGER IF NOT EXISTS immutable_update BEFORE UPDATE ON events
+            BEGIN SELECT RAISE(ABORT,'immutable journal'); END;
+          CREATE TRIGGER IF NOT EXISTS immutable_delete BEFORE DELETE ON events
+            BEGIN SELECT RAISE(ABORT,'immutable journal'); END;
         ''')
 
     def close(self):
         self.db.close()
 
     def transition(self, owner, expected_version, operation, manifest, payload, phase,
-                   object_id=None):
+                   object_id=None, *, binding):
+        exact(binding, ('receipt', 'run_id', 'attempt', 'anchor'))
+        require(type(binding['receipt']) is str
+                and re.fullmatch(r'[0-9a-f]{64}', binding['receipt']) is not None)
+        text(binding['run_id'])
+        require(type(binding['attempt']) is int and binding['attempt'] >= 1)
+        require(binding['anchor'] == owner)
         text(owner)
         text(operation, 64)
         require(type(expected_version) is int and expected_version >= 0)
@@ -129,13 +163,15 @@ class Journal:
         require(phase in {'intent', 'acknowledged', 'verified', 'blocked'})
         require(object_id is None or (type(object_id) is str
                                       and re.fullmatch(r'[0-9]{1,30}', object_id)))
-        self.db.execute('BEGIN IMMEDIATE')
         try:
+            self.db.execute('BEGIN IMMEDIATE')
             row = self.db.execute('SELECT version FROM owners WHERE owner=?', (owner,)).fetchone()
             version = row[0] if row else 0
-            require(version == expected_version)
+            maximum = self.db.execute('SELECT COALESCE(MAX(version),0) FROM events '
+                                      'WHERE owner=?', (owner,)).fetchone()[0]
+            require(version == expected_version == maximum)
             events = self.db.execute(
-                'SELECT operation,manifest,payload,phase,object_id FROM events '
+                'SELECT operation,manifest,payload,phase,object_id,receipt,run_id,attempt,anchor FROM events '
                 'WHERE owner=? ORDER BY version', (owner,)).fetchall()
             previous = next((e for e in reversed(events) if e[0] == operation), None)
             active = {}
@@ -143,24 +179,33 @@ class Journal:
                 active[event[0]] = event[3]
             if phase == 'intent':
                 require(previous is None and object_id is None
+                        and not any(e[1:3] == (manifest, payload) for e in events)
                         and all(p == 'verified' for p in active.values()))
             else:
                 require(previous is not None and previous[1:3] == (manifest, payload))
-                old_phase, old_id = previous[3:]
+                require(previous[5:] == (binding['receipt'], binding['run_id'],
+                                          binding['attempt'], binding['anchor']))
+                old_phase, old_id = previous[3:5]
                 if phase == 'acknowledged':
                     require(old_phase == 'intent' and object_id is not None)
                 elif phase == 'verified':
                     require(old_phase == 'acknowledged' and object_id == old_id)
                 else:
                     require(old_phase in {'intent', 'acknowledged'} and object_id == old_id)
-            self.db.execute('INSERT INTO events VALUES(?,?,?,?,?,?,?)',
-                            (owner, version + 1, operation, manifest, payload, phase, object_id))
+            self.db.execute('INSERT INTO events VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                            (owner, version + 1, operation, manifest, payload, phase, object_id,
+                             binding['receipt'], binding['run_id'], binding['attempt'], binding['anchor']))
             self.db.execute('INSERT INTO owners VALUES(?,?) ON CONFLICT(owner) '
                             'DO UPDATE SET version=excluded.version', (owner, version + 1))
             self.db.execute('COMMIT')
             return version + 1
+        except sqlite3.OperationalError as exc:
+            if self.db.in_transaction:
+                self.db.execute('ROLLBACK')
+            raise Blocked('journal unavailable; review durable state') from exc
         except BaseException:
-            self.db.execute('ROLLBACK')
+            if self.db.in_transaction:
+                self.db.execute('ROLLBACK')
             raise
 
     def resume(self, owner, operation):
