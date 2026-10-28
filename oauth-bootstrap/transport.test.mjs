@@ -16,7 +16,7 @@ test("workerd production entry exercises all external paths without native fetch
     platform: "browser",
   });
   for (const discovery of [false, true]) {
-  for (const redirectAt of (discovery ? [0, 4, 5] : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])) {
+  for (const redirectAt of (discovery ? [0, -1, 4, 5] : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])) {
     calls.length = 0;
     const mf = new Miniflare(
       convertV4MiniflareOptions({
@@ -47,7 +47,7 @@ test("workerd production entry exercises all external paths without native fetch
             outboundService: async (req) => {
               const u = new URL(req.url);
               calls.push(req.method + " " + u.hostname + u.pathname);
-              if (redirectAt && calls.length === redirectAt)
+              if (redirectAt > 0 && calls.length === redirectAt)
                 return new Response(null, {
                   status: 302,
                   headers: { Location: "https://evil.invalid/ZZSENSITIVE" },
@@ -79,7 +79,7 @@ test("workerd production entry exercises all external paths without native fetch
                 assert.equal(req.method, "GET");
                 assert.equal(req.headers.get("Authorization"), "Bearer ZZACCESS");
                 assert.equal(u.search, "?fields=id,first_name,last_name,merge_pending,merged_into");
-                return Response.json({id:"profile-99123",first_name:"ZZRoot",last_name:"ZZPerson",merge_pending:false});
+                return Response.json({id:"profile-99123",first_name:"ZZRoot",last_name:"ZZPerson",...(redirectAt === -1 ? {} : {merge_pending:false})});
               }
               if (discovery) assert.fail("discovery attempted writer request");
               if (u.pathname.endsWith("/public-key"))
@@ -151,6 +151,7 @@ test("workerd production entry exercises all external paths without native fetch
         const text=await done.text();
         assert.match(text,/Identity discovered, not connected/);
         assert.match(text,/profile-99123/);
+        if (redirectAt === -1) { assert.match(text,/merge status not supplied by Geni/); assert.doesNotMatch(text,/Pending merge: false/); }
         assert.doesNotMatch(text,/ZZACCESS|ZZREFRESH|ZZCODE/);
         assert.deepEqual(calls,["POST github.com/login/oauth/access_token","GET api.github.com/user","DELETE api.github.com/applications/ZZLOGINCLIENT/token","POST www.geni.com/platform/oauth/request_token","GET www.geni.com/api/profile"]);
         continue;

@@ -105,3 +105,22 @@ relaxed. In particular, an absent `merge_pending` is still a stop: the vendor's
 statement that blank fields may be omitted does not define absent Boolean as
 false. Report only the stage, not the callback address. A consumed state cannot
 be replayed; any retest requires a fresh human-started flow after review/release.
+
+## Identity-only unknown merge status (#205)
+
+The discovery-only display now permits an absent `merge_pending` ONLY when
+`merged_into` is also completely absent. Both fields are checked by own-property
+presence, so explicit null is not absence. The result prominently says
+"Warning: merge status not supplied by Geni (unknown)" and says it is identity
+evidence only, not connection or upload readiness. Missing is never normalized
+to false. A present merge flag must still be literal false. Any merge-target
+property in the unknown branch stops, including null or empty values. All other
+identity/name/wrapper/transport checks remain unchanged. The earlier strict
+missing-flag statement above describes the previous discovery release.
+
+This exception applies only to displaying identity to the human. Credential
+storage in pinned connections still requires explicit `merge_pending:false`;
+production parent/probe checks are unchanged. No pin is enrolled automatically.
+Official source: https://www.geni.com/platform/developer/help/api?path=profile
+says blank fields are omitted, but does NOT define missing Boolean as false.
+An unknown result therefore makes no claim about the absence of a merge.
