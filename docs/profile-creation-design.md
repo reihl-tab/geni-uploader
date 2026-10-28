@@ -375,3 +375,54 @@ new manifest hash attempting to evade old uncertain intent; explicit no-delete/n
 reset; no Geni network from the service; no writable git token in the runner; and
 no names, IDs, URLs, secrets or exception strings in public diagnostics. Reuse the
 existing strict schema, graph, field/private-readback and no-retry mutation tests.
+
+### v0.5 review clarifications
+
+- Check order is fixed: validate OIDC signature/issuer/audience/time and immutable
+  principal/repository identity first; enforce the service administrator's exact
+  reviewed workflow SHA and image-digest allowlist next; then canonicalize/hash
+  the complete proposal and compare every receipt binding; only then acquire the
+  owner/anchor lock and accept a CAS transition. A request body cannot select its
+  own trusted workflow or image. Authenticate a receipt before using any hash or
+  operation identifier from it. Reject unknown schema versions and extra fields.
+- Bind receipts to `job_workflow_ref`, reviewed workflow commit, `run_id` and
+  `run_attempt`, in addition to the existing fields. Inspect authoritative run
+  metadata where a claim is absent. A re-run attempt requires a fresh plan and
+  human confirmation; it cannot reuse an earlier receipt or bypass old intents.
+- A separate administrative allowlist pins the reviewed executable workflow SHA
+  and image digest service-side. Runtime requests cannot update it. An image
+  string claimed by a runner is not proof of which binary actually ran. The
+  runner can lie: this journal is a safety interlock for correctly implemented,
+  honest runs, not remote attestation or a defense against a compromised runner
+  holding the Geni write token. This residual trust must be disclosed in review.
+- The final expiry check is advisory with respect to the external POST: storage
+  and Geni cannot share an atomic transaction. Expiry, crash or timeout after an
+  intent is durable makes the intent uncertain/blocked, even if no POST was sent.
+  Never clear it on a clock expiry or treat a local timing check as exactly-once
+  execution. A received acknowledgement is still recorded after expiry and only
+  GET verification may continue.
+- A stuck lock with no durable intent may be released only by an authenticated
+  administrative recovery procedure after confirming the old job is terminal,
+  its receipt is revoked and no intent exists. Record an append-only recovery
+  event. A lock with any intent never expires into permission for another POST;
+  retain it blocked until reviewed GET-only reconciliation. There is no runtime
+  reset/unlock/delete endpoint. Administrative recovery design, credentials,
+  audit and failure tests must pass a separate review before deployment.
+- Cloudflare account creation, selection of an existing account, service
+  deployment and custody of any administrative secret are explicit USER
+  decisions. This document authorizes none of them. Never collect an admin
+  secret in chat or put one into a runner, receipt, git or public output. Free
+  service eligibility must be verified for the selected account before setup;
+  no paid plan, payment method, quota upgrade or overage is assumed authorized.
+- Free-tier and SQLite statements were checked against the current official
+  pricing and storage pages on 28 October 2026: Workers Free offers SQLite-backed
+  Durable Objects; free limits stop further operations of the exhausted type;
+  per-object storage supplies transactional strongly consistent operations.
+  Those claims do not prove availability in a particular account or region and
+  must be rechecked before deployment. No account was created for this design.
+- Receipt tokens must never appear in logs, errors, command arguments, URLs,
+  summaries or artifacts. Transfer only in a protected request body/header,
+  explicitly mask them before any job output, disable shell tracing and use
+  generic failure codes. Test stdout/stderr and service telemetry on every error
+  path for token sentinels. Tokens must not encode private data in visible form;
+  bind opaque identifiers server-side or use authenticated encrypted envelopes.
