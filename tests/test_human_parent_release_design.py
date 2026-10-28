@@ -27,7 +27,7 @@ def test_human_parent_design_is_closed_and_names_all_proof_gates():
 def test_design_cites_vendor_contract_and_distinguishes_unknowns():
     text = ' '.join((ROOT / 'docs/human-parent-runner-release.md').read_text().split())
     for endpoint in ['profile/add-parent', 'profile/immediate-family', 'union', 'profile']:
-        assert 'https://www.geni.com/platform/developer/help/api?path=' + endpoint in text
+        assert ('https://www.geni.com/platform/developer/help/api?path=' + endpoint) in text.split()
     for guard in ['UNCERTAIN', 'Production creation remains', 'No real family profile',
                   'Unknown merge', 'No firm live-create', 'not cryptographic proof']:
         assert guard in text

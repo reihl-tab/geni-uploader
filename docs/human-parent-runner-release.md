@@ -71,7 +71,7 @@ vendor proof. No mutation experiment is disguised as a read-only check.
 | bilingual/default | returned names.he/names.en plus main-name fields, locale metadata if documented | populated main English fields do not prove English default for every UI/viewer |
 
 Read-only collector design: accept only exact reviewed routes, bounded counts,
-size/depth, ten-second spacing, no retries after429/challenge/error; classify
+size/depth, ten-second spacing, no retries after 429/challenge/error; classify
 missing/inconsistent/redacted/partial graph as UNKNOWN. Follow no arbitrary
 response URL. A next-page URL is data, must match fixed host/owner route and
 allowed parameters before any human-run client uses it. Store a graph hash and
@@ -91,7 +91,7 @@ consent references and exact scope, full normalized manifest+payload hashes,
 canonical graph snapshot/hash+completeness proof, slot decision/proof, private and
 locale proof versions, data commit, signed workflow/executor commit, immutable
 image/binary digest, shared journal state version, count<=2, creation/expiry times
-(max15minutes) and unpredictable one-use Plan id. No fabricated release pins.
+(max 15 minutes) and unpredictable one-use Plan id. No fabricated release pins.
 Sign using a reviewed trusted Plan authority, not a self-supplied JSON hash.
 Proof references must be authenticated, scope-specific and immutable; a boolean
 "approved" in data is never proof. Any changed data/account/graph/artifact,
