@@ -47,12 +47,37 @@ def proposal(data, pins):
 
 
 def verify_proposal(value):
-    require(type(value) is dict and 'proposal_hash' in value)
+    exact(value, ('schema_version', 'kind', 'owner', 'operator',
+                  'approval_as_supplied_not_authenticated', 'manifest_hash', 'pins', 'entries',
+                  'blockers', 'warnings', 'creation_enabled', 'live_checks_performed',
+                  'approval_grants_write', 'proposal_hash'))
     expected = value['proposal_hash']
     basis = {k: v for k, v in value.items() if k != 'proposal_hash'}
     require(type(expected) is str and expected == digest(basis))
     require(value.get('creation_enabled') is False and value.get('live_checks_performed') is False
             and value.get('approval_grants_write') is False and value.get('blockers') == list(BLOCKERS))
+    require(type(value.get('entries')) is list and 1 <= len(value['entries']) <= 2)
+    for entry in value['entries']:
+        exact(entry, ('operation', 'action', 'anchor', 'proposed_payload', 'payload_hash',
+                      'readiness', 'duplicate_status'))
+        require(entry['action'] == 'create_parent' and entry['readiness'] == 'blocked'
+                and entry['duplicate_status'] == 'not_checked')
+        require(entry['anchor'] == value['owner']['node'])
+        require(entry['payload_hash'] == digest(entry['proposed_payload']))
+    # Rebuild the canonical proposal, rather than trusting a self-recomputed hash.
+    reconstructed = {'schema_version': 1, 'owner': value['owner'], 'operator': value['operator'],
+                     'approval': value['approval_as_supplied_not_authenticated'], 'parents': []}
+    for entry in value['entries']:
+        payload = entry['proposed_payload']
+        require(type(payload) is dict and type(payload.get('names')) is dict
+                and type(payload['names'].get('en')) is dict)
+        exact(payload, ('names', *payload['names']['en'],
+                        'gender', 'is_alive', 'public'))
+        reconstructed['parents'].append({'local_id': entry['operation'], 'relation': 'parent',
+                                         'anchor': entry['anchor'], 'names': payload['names'],
+                                         'gender': payload['gender'], 'is_alive': payload['is_alive'],
+                                         'public': payload['public']})
+    require(digest(proposal(reconstructed, value['pins'])) == digest(value))
     return expected
 
 
