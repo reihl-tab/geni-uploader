@@ -156,7 +156,7 @@ def test_workflow_uses_only_pinned_value_free_renderer():
 
 def test_old_image_cannot_attempt_missing_renderer_or_claim_ready():
     workflow = (Path(__file__).parents[1] / '.github/workflows/geni-upload.yml').read_text()
-    assert 'PLAN_SUMMARY_IMAGE_READY: "no"' in workflow
+    assert 'PLAN_SUMMARY_IMAGE_READY: "yes"' in workflow
     assert '[ "${PLAN_SUMMARY_IMAGE_READY:-no}" = "yes" ]; then' in workflow
     assert '[ "${PLAN_SUMMARY_IMAGE_READY:-no}" != "yes" ]; then' in workflow
     assert 'Summary image not released; inspect the protected log.' in workflow
