@@ -62,3 +62,37 @@ def test_each_method_row_retains_its_own_limits(method, limits):
     assert len(rows) == 1
     for limit in limits:
         assert limit in rows[0], (method, limit)
+
+
+def test_decision_tree_and_recovery_keep_independent_stop_boundaries():
+    text = (Path(__file__).resolve().parents[1] /
+            'docs/profile-create-api-contracts.md').read_text()
+    tree = ' '.join(text.split('## Father-first decision tree\n', 1)[1]
+                    .split('## Children are a separate design scope\n', 1)[0].split())
+    recovery = ' '.join(text.split('## Uncertainty and recovery\n', 1)[1].split())
+    for phrase in (
+        'No approved executor or shared durable intent backend means STOP before any POST.',
+        'Pin mismatch or scanner trip means STOP, not repair-the-control-and-continue.',
+        'commit shared durable intent before its one father POST.',
+        'No retry, redirect, refresh or second POST.',
+        'A timeout after consumption remains consumed even if send is uncertain.',
+        'Exit/HTTP success alone is not VERIFIED.',
+        'means STOP and report evidence, never auto-repair.',
+        'Never overwrite it because it lacks a name.',
+        'mother is a separately approved plan, not an automatic next step.',
+        'not permission to create duplicate partners or merge their identities.',
+        'No guessed marriage dates.',
+    ):
+        assert phrase in tree
+    for phrase in (
+        ('Preserve consumed intent across crashes, receipt expiry, new manifests/plan IDs, '
+        'connection labels and fresh runners.'),
+        'Encryption failure after POST must not erase consumption or cause another create.',
+        'Uncertain result: separately approved GET-only reconciliation.',
+        'Existing known created ID cannot change.',
+        'Ordinary verify is forbidden from uncertain state;',
+        'only the dedicated reviewed reconciliation transition can finish.',
+        'No reset, replay, retry, automatic rollback/delete/merge or implied safe undo.',
+        'A created father may remain even when readback fails.',
+    ):
+        assert phrase in recovery
