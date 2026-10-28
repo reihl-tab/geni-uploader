@@ -43,8 +43,9 @@ Only fixed GitHub secret names can be written. A pinned TweetNaCl sealed-box lib
 GitHub's public key, using a narrow secret-writer credential, never browser JS.
 The refresh bundle is saved before compatibility access token and pending marker
 is cleared last. Partial failure may need manual refresh recovery or re-consent;
-no automatic token request retry. No profile API, user data tree, upload, dispatch,
-log output, external analytics or token display exists here.
+no automatic token request retry. Only the fixed minimal profile identity GET described in CONNECTIONS.md is
+allowed. No family/tree collection, upload, dispatch, log output, external
+analytics or token display exists here.
 
 ## Required setup after review
 
@@ -86,7 +87,9 @@ log output, external analytics or token display exists here.
 - Bootstrap can replace stored authorization: only the approved human starts it;
   do not run two bootstrap sessions concurrently with refresh/upload. A later
   human-run identity plan must confirm the intended Geni account; successful OAuth
-  is NOT identity proof. There is no account profile lookup in the callback.
+  is NOT identity proof. Pinned connection callbacks perform the fixed token-self GET and require an
+  exact configured canonical owner. Discovery-only callbacks show the minimal
+  identity to the human without storing credentials. Neither proves upload safety.
 
 No deploy command here: setup and final host are intentionally gated. The
 wrangler file declares a candidate Worker and DO without real identifiers.
