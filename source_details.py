@@ -1,6 +1,7 @@
 """User-run existing-source metadata repair. No create/delete/citation endpoints."""
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 import geni_upload as api
+import plan_report
 
 FIELDS = {"document": {"title", "description", "date", "labels"},
           "photo": {"title", "description", "date"}}
@@ -27,8 +29,11 @@ def load_records(path):
     seen = set()
     for item in data["items"]:
         required = {"key", "kind", "object_id", "expect", "set", "targets", "manual_facts"}
-        if not isinstance(item, dict) or set(item) != required:
+        if not isinstance(item, dict) or set(item) not in (required, required | {"description_only"}):
             raise api.ApiError("invalid source-details item fields")
+        description_only = item.get("description_only", False)
+        if "description_only" in item and description_only is not True:
+            raise api.ApiError("description_only must be true when present")
         kind = item["kind"]
         if kind not in FIELDS or not re.fullmatch(r"[0-9]+", str(item["object_id"])):
             raise api.ApiError("invalid existing source ID or kind")
@@ -37,13 +42,25 @@ def load_records(path):
             raise api.ApiError("duplicate existing source object")
         seen.add(anchor)
         if (not isinstance(item["expect"], dict) or not item["expect"]
-                or set(item["expect"]) - {"title", "source_url"}
+                or not (set(item["expect"]) & {"title", "source_url"})
+                or set(item["expect"]) - {"title", "source_url", "description_sha256"}
                 or any(not isinstance(v, str) or not v for v in item["expect"].values())):
             raise api.ApiError("expected title or source URL required")
+        old_hash = item["expect"].get("description_sha256")
+        if old_hash is not None and not re.fullmatch(r"[0-9a-f]{64}", old_hash):
+            raise api.ApiError("invalid expected description hash")
+        if description_only and old_hash is None:
+            raise api.ApiError("description-only repair requires expected old description hash")
         if (not isinstance(item["set"], dict) or not item["set"]
-                or set(item["set"]) - FIELDS[kind]
+                or set(item["set"]) - (FIELDS[kind] | {"description_en"})
                 or any(not isinstance(v, str) or not v.strip() for v in item["set"].values())):
             raise api.ApiError("invalid metadata fields")
+        if description_only and (set(item["set"]) - {"description_en", "description"}
+                                 or "description_en" not in item["set"]):
+            raise api.ApiError("description-only repair requires English description fields only")
+        if "description" in item["set"] or "description_en" in item["set"]:
+            # Author-declared English is mandatory for all newly written descriptions.
+            api.render_description(item["set"])
         if not isinstance(item["targets"], list) or not item["targets"]:
             raise api.ApiError("explicit targets required")
         ids = set()
@@ -69,28 +86,101 @@ def object_read(token, kind, oid):
     raise api.ApiError("existing source node identity not confirmed")
 
 
-def deceased_target(token, target):
+def deceased_target(token, target, progress=None):
+    if progress:
+        progress("target_identity")
     pid, _ = api.verify_profile(token, str(target["profile_id"]), target["expect_name"])
     pid = str(pid).removeprefix("profile-")
     if not pid.isdigit():
         raise api.ApiError("invalid served target ID")
+    if progress:
+        progress("target_deceased")
     obj = api.execute("GET", "profile", f"{api.API_BASE}/profile-{pid}", token)
     if not isinstance(obj, dict) or obj.get("is_alive") is not False:
         raise api.ApiError("target not confirmed deceased")
     return pid
 
 
+def expectation_checks(obj, item):
+    """Fixed-key booleans only; never return observed or expected source data."""
+    checks = {}
+    for key, value in item["expect"].items():
+        if key == "description_sha256":
+            text = obj.get("description")
+            checks["description_present"] = isinstance(text, str)
+            checks["description_hash"] = (isinstance(text, str)
+                                          and hashlib.sha256(text.encode()).hexdigest() == value)
+            desired = item["set"].get("description")
+            if "description_en" in item["set"]:
+                desired = api.render_description(item["set"])
+            checks["description_desired"] = isinstance(text, str) and text == desired
+        elif key in {"title", "source_url"}:
+            checks[key] = obj.get(key) == value
+        else:
+            raise api.ApiError("unsupported expectation")
+    return checks
+
+
+def expectations_pass(checks):
+    anchors = all(value for key, value in checks.items() if key in {"title", "source_url"})
+    description = ("description_present" not in checks or
+                   (checks["description_present"] and
+                    (checks["description_hash"] or checks["description_desired"])))
+    return anchors and description
+
+
+def matches_expect(obj, item):
+    return expectations_pass(expectation_checks(obj, item))
+
+
+DIAGNOSTIC_STAGES = frozenset({"schema", "token", "object_identity", "preconditions",
+                              "target_identity", "target_deceased", "item_checked",
+                              "plan_checked", "repair", "snapshot"})
+DIAGNOSTIC_RESULTS = frozenset({"start", "pass", "fail", "true", "false"})
+DIAGNOSTIC_CHECKS = frozenset({"title", "source_url", "description_present",
+                              "description_hash", "description_desired"})
+
+
+def diagnostic(stage, result="start", item=0, target=0):
+    # Only fixed vocabulary and internally generated ordinals reach the log.
+    if (stage not in DIAGNOSTIC_STAGES | DIAGNOSTIC_CHECKS or
+            result not in DIAGNOSTIC_RESULTS or type(item) is not int or
+            type(target) is not int or item < 0 or target < 0):
+        raise ValueError("invalid diagnostic fields")
+    print(f"source-details item={item} target={target} stage={stage} result={result}", flush=True)
+
+
 def checked_plan(items, token):
     """All identities and old metadata checked before the first mutation."""
     plan = []
-    for item in items:
+    for ordinal, item in enumerate(items, 1):
+        diagnostic("object_identity", item=ordinal)
         obj = object_read(token, item["kind"], item["object_id"])
-        if any(obj.get(k) != v for k, v in item["expect"].items()):
+        diagnostic("object_identity", "pass", item=ordinal)
+        diagnostic("preconditions", item=ordinal)
+        checks = expectation_checks(obj, item)
+        for key, passed in checks.items():
+            diagnostic(key, "true" if passed else "false", item=ordinal)
+        if not expectations_pass(checks):
+            diagnostic("preconditions", "fail", item=ordinal)
             raise api.ApiError("existing source precondition mismatch")
-        targets = [deceased_target(token, t) for t in item["targets"]]
+        diagnostic("preconditions", "pass", item=ordinal)
+        targets = []
+        for target_ordinal, target in enumerate(item["targets"], 1):
+            def progress(stage, ordinal=ordinal, target_ordinal=target_ordinal):
+                diagnostic(stage, item=ordinal, target=target_ordinal)
+            targets.append(deceased_target(token, target, progress=progress))
+            diagnostic("target_deceased", "pass", item=ordinal, target=target_ordinal)
         resolved_item = dict(item)
         resolved_item["object_id"] = obj["id"].split("-", 1)[1]
+        desired = dict(item["set"])
+        if "description_en" in desired:
+            desired["description"] = api.render_description(desired)
+            del desired["description_en"]
+        resolved_item["set"] = desired
         plan.append((resolved_item, obj, targets))
+        diagnostic("item_checked", "pass", item=ordinal)
+    diagnostic("plan_checked", "pass")
     return plan
 
 
@@ -100,6 +190,10 @@ def normalized_tag(value):
 
 def apply_plan(plan, token, state_path, sync_state=False):
     """One POST at a time; no retry or replacement on an uncertain result."""
+    if any(item.get("description_only") for item, _, _ in plan):
+        if not all(item.get("description_only") for item, _, _ in plan):
+            raise api.ApiError("description-only and tag-changing repairs cannot be mixed")
+        return apply_description_plan(plan, token, state_path, sync_state)
     state = Path(state_path)
     if state.exists():
         prior = json.loads(state.read_text(encoding="utf-8"))
@@ -164,6 +258,108 @@ def apply_plan(plan, token, state_path, sync_state=False):
     print("metadata and tags verified; fact citations remain manual")
 
 
+def _sync_description_state(state):
+    root = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
+    rel = state.resolve().relative_to(Path(root).resolve())
+    subprocess.run(["git", "add", "--", str(rel)], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    diff = subprocess.run(["git", "diff", "--cached", "--quiet"], check=False)
+    if diff.returncode == 1:
+        subprocess.run(["git", "-c", "user.name=source-details",
+                        "-c", "user.email=source-details@localhost", "commit", "--only", "-qm",
+                        "Record description repair checkpoint", "--", str(rel)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif diff.returncode != 0:
+        raise api.ApiError("description state sync failed")
+    branch = os.environ.get("GENI_UPLOAD_REF")
+    if not branch:
+        raise api.ApiError("description state sync requires explicit branch")
+    # Even an unchanged local checkpoint must reach remote before any POST.
+    subprocess.run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def apply_description_plan(plan, token, state_path, sync_state=False):
+    """Exact existing objects only. Pending writes reconcile by GET, never replay.
+
+    Readback lag is a STOP, not permission to issue another update. A fresh
+    user-triggered repair may clear pending only when desired metadata and
+    unchanged tags are GET-proven. No tag/create/delete endpoints are used.
+    """
+    state = Path(state_path)
+    binding = hashlib.sha256(json.dumps([item for item, _, _ in plan],
+                                       sort_keys=True).encode()).hexdigest()
+    journal = {"version": 1, "binding": binding, "items": {}}
+    if state.exists():
+        journal = json.loads(state.read_text())
+        if (journal.get("version") != 1 or journal.get("binding") != binding
+                or not isinstance(journal.get("items"), dict)):
+            raise api.ApiError("description repair journal binding mismatch")
+    def checkpoint():
+        fd, name = tempfile.mkstemp(dir=state.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as out:
+                json.dump(journal, out, ensure_ascii=False, sort_keys=True)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(name, state)
+            directory_fd = os.open(state.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            if sync_state:
+                _sync_description_state(state)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+    def preserved(obj):
+        # Store only metadata actually needing protection, privately in the journal.
+        if not isinstance(obj.get("tags"), list):
+            raise api.ApiError("description repair requires explicit tag-list readback")
+        return {k: obj[k] for k in ("title", "date", "source_url", "tags") if k in obj}
+    def verify(obj, item, before):
+        if obj.get("description") != item["set"]["description"] or preserved(obj) != before:
+            raise api.VerificationError("description or preserved metadata readback pending; stop")
+    # Reconcile ALL pending/verified entries before allowing any untouched write.
+    for item, before, _ in plan:
+        key = item["kind"] + "-" + str(item["object_id"])
+        rec = journal["items"].get(key)
+        if rec is not None:
+            if (not isinstance(rec, dict) or rec.get("phase") not in ("pending", "verified")
+                    or not isinstance(rec.get("preserved"), dict)):
+                raise api.ApiError("invalid description repair journal")
+            current = object_read(token, item["kind"], item["object_id"])
+            verify(current, item, rec["preserved"])
+            rec["phase"] = "verified"
+        else:
+            preserved(before)  # reject malformed tags before any write
+    checkpoint()
+    for item, _, _ in plan:
+        key = item["kind"] + "-" + str(item["object_id"])
+        if key in journal["items"]:
+            continue
+        # Refresh exact identity and preconditions immediately before mutation.
+        current = object_read(token, item["kind"], item["object_id"])
+        if not matches_expect(current, item):
+            raise api.ApiError("description precondition changed; stop")
+        before = preserved(current)
+        if current.get("description") == item["set"]["description"]:
+            journal["items"][key] = {"phase": "verified", "preserved": before}
+            checkpoint()
+            continue
+        journal["items"][key] = {"phase": "pending", "preserved": before}
+        checkpoint()  # durable intent before the only permitted update
+        api.execute("POST", item["kind"] + "_update",
+                    f"{api.API_BASE}/{key}/update", token,
+                    {"description": item["set"]["description"]})
+        after = object_read(token, item["kind"], item["object_id"])
+        verify(after, item, before)
+        journal["items"][key]["phase"] = "verified"
+        checkpoint()
+    print("existing descriptions verified; no tags changed; fact citations remain manual")
+
+
 def private_json(path, data):
     dest = Path(path)
     if dest.exists():
@@ -209,8 +405,14 @@ def main():
     parser.add_argument("--sync-state", action="store_true")
     args = parser.parse_args()
     stack = ExitStack()
+    summary = plan_report.report("details-plan")
     try:
+        diagnostic("schema")
         items = load_records(args.manifest)
+        diagnostic("schema", "pass")
+        summary["counts"] = plan_report.details_counts(items)
+        summary["checks"]["schema"] = "pass"
+        summary["checks"]["listing"] = "not_required"
         if args.mode == "validate":
             print("source-details schema valid")
             return 0
@@ -226,24 +428,52 @@ def main():
                 Path(args.state + ".lock").open("w", encoding="utf-8")  # noqa: SIM115
             )
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        diagnostic("token")
         token = api.get_token(args)
+        if args.mode == "plan" and not token:
+            raise api.ApiError("plan requires token for complete verification")
+        diagnostic("token", "pass")
         api.ALLOWLIST.update({("GET", "document"), ("GET", "photo"),
                               ("POST", "document_update"), ("POST", "photo_update")})
         if args.mode == "snapshot":
+            diagnostic("snapshot")
             snapshot(items, token, args.output)
+            diagnostic("snapshot", "pass")
         else:
+            summary["checks"]["identity"] = "fail"
+            summary["checks"]["preconditions"] = "fail"
             plan = checked_plan(items, token)
+            summary["checks"]["identity"] = "pass"
+            summary["checks"]["preconditions"] = "pass"
+            summary["complete"] = True
             if args.mode == "repair":
+                diagnostic("repair")
                 apply_plan(plan, token, args.state, args.sync_state)
+                diagnostic("repair", "pass")
             else:
                 print("source identity and target checks passed; no writes")
         return 0
-    except (api.ApiError, OSError, ValueError, TypeError, subprocess.SubprocessError):
-        # Fixed public-safe output; never print response payloads or identifiers.
-        print("source-details stopped; inspect private input and verification state")
+    except (api.ApiError, OSError, ValueError, TypeError, subprocess.SubprocessError) as error:
+        # Never stringify exceptions: they can include tokens, URLs and payloads.
+        category = "api"
+        if isinstance(error, api.ThrottledError):
+            category = "throttled"
+        elif isinstance(error, api.UncertainWrite):
+            category = "uncertain_write"
+        elif isinstance(error, api.VerificationError):
+            category = "verification"
+        elif isinstance(error, OSError):
+            category = "filesystem"
+        elif isinstance(error, subprocess.SubprocessError):
+            category = "subprocess"
+        elif isinstance(error, (ValueError, TypeError)):
+            category = "input"
+        print(f"source-details stopped category={category}; inspect last stage")
         return 1
     finally:
         stack.close()
+        if args.mode == "plan":
+            plan_report.save(summary)
 
 
 if __name__ == "__main__":
