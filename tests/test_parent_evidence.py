@@ -68,3 +68,25 @@ def test_private_sentinels_never_in_summary_or_error():
     data['self'] = {'id': 'ZZPrivateSentinel'}
     with pytest.raises(p.Blocked) as error: p.review(data, OWNER)
     assert 'ZZPrivateSentinel' not in str(error.value)
+
+
+def test_duplicate_union_id_rejected():
+    data = parents()
+    data['unions'] *= 2
+    with pytest.raises(p.Blocked): p.review(data, OWNER)
+
+
+@pytest.mark.parametrize('field', ['nodes', 'children', 'partners'])
+def test_hundred_record_bounds(field):
+    data = copy.deepcopy(DATA)
+    if field == 'nodes':
+        data['family']['nodes'] = {f'profile-{i}': {'id': f'profile-{i}'} for i in range(100)}
+    else:
+        data['unions'] = [{'id': 'union-99111', 'children': [], 'partners': []}]
+        data['unions'][0][field] = [f'profile-{i}' for i in range(100)]
+    assert p.review(data, OWNER)['create_enabled'] is False
+    if field == 'nodes':
+        data['family']['nodes']['profile-100'] = {'id': 'profile-100'}
+    else:
+        data['unions'][0][field].append('profile-100')
+    with pytest.raises(p.Blocked): p.review(data, OWNER)

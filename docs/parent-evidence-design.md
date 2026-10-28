@@ -1,6 +1,6 @@
 # Parent evidence: offline first slice and human-run probe design
 
-For #188, dependent on #144 and #187. This is not a runnable live probe or a
+For #188, based on merged #144 and related to the #187 UI design. This is not a runnable live probe or a
 production creation gate. `parent_evidence.py` inspects supplied snapshots only;
 `collect()` always blocks. No credentials, network client, CLI/image/workflow
 entry point or live Geni execution has been added. User-supplied snapshots are
