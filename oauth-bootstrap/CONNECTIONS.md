@@ -50,3 +50,46 @@ page, signs into approved GitHub identity if asked, confirms correct Geni accoun
 and selects the intended slot. Never give the old single-primary connect link to
 a second owner before the new deployment/config is verified. Record the actual
 callback/route and slot mapping privately and provide one step at a time.
+
+## Discovery-only bootstrap (#199)
+
+When the canonical owner nodes are not yet established, a separately approved
+rollout may set `DISCOVERY_ONLY=true`. This deployment hides and rejects every
+connection start, including primary. `/discover/start` is a same-origin POST
+behind the same GitHub identity gate. Normal mode (variable absent) rejects this
+route. Any other variable value fails setup. Writer credentials are not required
+in discovery mode and should be removed from its binding for least privilege.
+Preserve approved secrets securely for a later reviewed normal-mode rollout.
+Do not rotate, copy or replace existing repository tokens during discovery.
+
+One-time state contains `purpose=discover` without a destination, bound to the
+human session and browser. The callback exchanges the human-approved code and
+performs only the fixed HTTPS GET
+`/api/profile?fields=id,first_name,last_name,merge_pending,merged_into`, bearer
+header, no redirects. A canonical string ID, nonblank bounded first name,
+bounded optional last name, explicit `merge_pending:false`, no merge target and
+no results wrapper are required. The result shows escaped canonical ID, name
+and merge status to the authenticated human, with no-store/no-referrer and the
+binding cookie cleared. It does not show tokens or raw responses. Access and
+refresh tokens remain transient memory only; no writer, tree mutation, durable
+credential custody or automatic pin enrollment occurs. Geni may retain the app
+authorization even though the Worker discards its tokens. No revocation or
+revocation of other connections is attempted.
+
+The human independently confirms the intended logged-in account and returns only
+the nonsecret canonical ID and displayed identity. Record the account-to-slot
+mapping privately. A website GUID, a name alone or the discovery result without
+the human's account confirmation is not enough. Repeat separately for each owner
+whose pin lacks evidence. Then separately approve normal-mode deployment with
+both distinct primary and secondary pins. This requires another human OAuth
+connection; discovery does not save a reusable token. Existing secondary
+consumer/refresh and parent-write restrictions remain unchanged.
+
+Every Geni state now carries explicit `purpose=connect` or `purpose=discover`.
+In-flight states from older releases, wrong-purpose callbacks, mode changes and
+replays fail closed. Roll out only when there is no concurrent OAuth/refresh/
+upload; do not retry an old callback. The callback URL can contain a code even
+on discovery results: never share/copy the address. Share only the minimal result
+text or a cropped result with address bar excluded. Existing provider URL-retention
+limitations still apply and need rollout approval. Tests use synthetic identities
+only; no live OAuth is performed by agents.

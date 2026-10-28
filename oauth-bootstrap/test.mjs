@@ -814,3 +814,67 @@ test('wrong additional account on primary button cannot overwrite primary',async
   }});
   assert.equal(r.status,400);assert.equal(calls.length,2);
 });
+
+async function beginDiscovery(e) {
+  const r = await handle(request('/discover/start', {method:'POST', headers:{Origin:origin, Cookie:await session()}}), e, {fetcher:nofetch});
+  assert.equal(r.status,303);
+  const url = new URL(r.headers.get('location'));
+  assert.equal(url.origin,'https://www.geni.com');
+  assert.equal(url.searchParams.get('redirect_uri'),origin+'/callback');
+  return {state:url.searchParams.get('state'), cookie:r.headers.get('set-cookie').split(';')[0]+'; '+await session()};
+}
+const discoveryEnv = () => ({...setup(),DISCOVERY_ONLY:'true',GITHUB_WRITER:undefined});
+const discovered = {id:'profile-99123',first_name:'ZZRoot',last_name:'ZZPerson',merge_pending:false};
+function discoveryFetcher(owner, calls) {
+  return async (u,o) => {
+    calls.push(u);
+    if(u === 'https://www.geni.com/platform/oauth/request_token') return Response.json({access_token:'ZZACCESS',refresh_token:'ZZREFRESH',expires_in:600});
+    assert.equal(u,'https://www.geni.com/api/profile?fields=id,first_name,last_name,merge_pending,merged_into');
+    assert.equal(o.method,'GET');assert.equal(o.redirect,'manual');
+    assert.equal(o.headers.Authorization,'Bearer ZZACCESS');assert.ok(!u.includes('ZZACCESS'));
+    return owner instanceof Response ? owner : Response.json(owner);
+  };
+}
+test('discovery-only needs no writer, displays escaped minimal identity and never writes or retains token',async()=>{
+ const e=discoveryEnv(),b=await beginDiscovery(e),calls=[];
+ const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:discoveryFetcher({...discovered,first_name:'<script>ZZ&"\'',unexpected:'ZZPRIVATE'},calls)});
+ assert.equal(r.status,200);const text=await r.text();
+ assert.match(text,/profile-99123/);assert.match(text,/&lt;script&gt;ZZ&amp;&quot;&#39;/);
+ for(const x of ['<script>','ZZPRIVATE','ZZACCESS','ZZREFRESH','ZZCODE','ZZSECRET']) assert.ok(!text.includes(x));
+ assert.equal(calls.length,2);assert.equal(e.OAUTH_STATES.entries.size,0);
+ assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('referrer-policy'),'no-referrer');
+ assert.match(r.headers.get('set-cookie'),/Max-Age=0/);
+ const replay=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:nofetch});assert.equal(replay.status,400);
+});
+test('discovery deployment disables every connection start and normal deployment disables discovery',async()=>{
+ for(const path of ['/start','/connections/secondary/start','/connections/tertiary/start']) {
+  const e=discoveryEnv();const r=await handle(request(path,{method:'POST',headers:{Origin:origin,Cookie:await session()}}),e,{fetcher:nofetch});assert.equal(r.status,400);assert.equal(e.OAUTH_STATES.entries.size,0);
+ }
+ const r=await handle(request('/discover/start',{method:'POST',headers:{Origin:origin,Cookie:await session()}}),setup(),{fetcher:nofetch});assert.equal(r.status,400);
+ const landing=await handle(request('/',{headers:{Cookie:await session()}}),discoveryEnv(),{fetcher:nofetch});const text=await landing.text();assert.match(text,/Discover current/);assert.ok(!text.includes('Connect primary'));
+});
+test('discovery requires identity, same origin, query-free POST and valid config',async()=>{
+ for(const [path,method,headers] of [['/discover/start','POST',{Origin:origin}],['/discover/start','POST',{Origin:'https://evil.invalid',Cookie:await session()}],['/discover/start?purpose=connect','POST',{Origin:origin,Cookie:await session()}],['/discover/start','GET',{Cookie:await session()}]]) {
+ const r=await handle(request(path,{method,headers}),discoveryEnv(),{fetcher:nofetch});assert.ok(r.status>=400); }
+ for(const value of ['false','TRUE','']) {const r=await handle(request('/'),{...setup(),DISCOVERY_ONLY:value},{fetcher:nofetch});assert.equal(r.status,400);}
+});
+test('purpose cannot be injected at callback, changed across deployment or omitted from old state',async()=>{
+ for(const extra of ['&purpose=connect','&destination=primary','&connection=secondary']) {
+  const e=discoveryEnv(),b=await beginDiscovery(e);const r=await handle(request('/callback?code=ZZCODE&state='+b.state+extra,{headers:{Cookie:b.cookie}}),e,{fetcher:nofetch});assert.equal(r.status,400);
+ }
+ for(const [e,fn,changed] of [[discoveryEnv(),beginDiscovery,{DISCOVERY_ONLY:undefined,GITHUB_WRITER:'ZZWRITER'}],[setup(),begin,{DISCOVERY_ONLY:'true'}]]) {
+  const b=await fn(e);const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),{...e,...changed},{fetcher:nofetch});assert.equal(r.status,400);
+ }
+ const e=setup(),b=await begin(e);e.OAUTH_STATES.entries.get('entry').payload={destination:'primary'};
+ const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:nofetch});assert.equal(r.status,400);
+});
+for(const owner of [{...discovered,id:99123},{...discovered,id:'99123'},{...discovered,merge_pending:true},{...discovered,merge_pending:undefined},{...discovered,merged_into:'profile-99555'},{...discovered,results:[]},{...discovered,first_name:''},{...discovered,first_name:[]},{...discovered,last_name:3},{...discovered,first_name:'x'.repeat(201)},new Response('',{status:302,headers:{location:'https://evil.invalid'}}),new Response('ZZSENSITIVE',{status:500}),new Response('not json')]) {
+ test('malformed merged or redirected discovery identity fails without writer '+JSON.stringify(owner),async()=>{
+ const e=discoveryEnv(),b=await beginDiscovery(e),calls=[];const r=await handle(request('/callback?code=ZZCODE&state='+b.state,{headers:{Cookie:b.cookie}}),e,{fetcher:discoveryFetcher(owner,calls)});assert.equal(r.status,400);assert.equal(calls.length,2);const text=await r.text();assert.ok(!text.includes('ZZSENSITIVE'));assert.ok(!text.includes('ZZACCESS'));
+ });
+}
+test('state object rejects invalid or mixed purpose at issuance',async()=>{
+ for(const payload of [{purpose:'unknown'},{purpose:'discover',destination:'primary'},{purpose:'connect'},{purpose:'connect',destination:'unknown'}]) {
+  const one=states().one;await assert.rejects(one.fetch(new Request('https://state.invalid/issue',{method:'POST',body:JSON.stringify({subject:'ZZSUBJECT',binding:'a'.repeat(64),payload})})));
+ }
+});

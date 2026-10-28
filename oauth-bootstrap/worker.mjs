@@ -79,7 +79,10 @@ const digest = async (v) =>
 const page = (body, status = 200, extra = {}) =>
   new Response(body, { status, headers: { ...secureHeaders, ...extra } });
 
+const escapeHtml = (v) => v.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
 function config(env) {
+  if (env.DISCOVERY_ONLY !== undefined && env.DISCOVERY_ONLY !== "true") fail();
   const origin = new URL(env.CALLBACK_ORIGIN);
   // Enabling any additional destination also pins primary, preventing a wrong
   // button/account from replacing the existing primary connection.
@@ -97,11 +100,11 @@ function config(env) {
   for (const name of [
     "GENI_CLIENT_ID",
     "GENI_APP_SECRET",
-    "GITHUB_WRITER",
     "GITHUB_LOGIN_CLIENT_ID",
     "GITHUB_LOGIN_CLIENT_SECRET",
   ])
     credential(env[name]);
+  if (env.DISCOVERY_ONLY !== "true") credential(env.GITHUB_WRITER);
   return {
     origin: origin.origin,
     redirect: origin.origin + "/callback",
@@ -339,6 +342,9 @@ export class OneTimeState {
         typeof data.subject !== "string" ||
         !data.subject ||
         data.subject.length > 128 ||
+        (data.payload?.purpose !== undefined && !["connect", "discover"].includes(data.payload.purpose)) ||
+        (data.payload?.purpose === "discover" && data.payload.destination !== undefined) ||
+        (data.payload?.purpose === "connect" && !Object.hasOwn(CONNECTIONS, data.payload.destination)) ||
         (data.payload?.destination !== undefined &&
           !Object.hasOwn(CONNECTIONS, data.payload.destination)) ||
         (data.payload?.verifier !== undefined &&
@@ -477,6 +483,9 @@ export async function handle(
       );
     }
     if (request.method === "GET" && url.pathname === "/" && !url.search) {
+      if (env.DISCOVERY_ONLY === "true") return page(
+        '<h1>Discover account identity only</h1><p>No connection is saved. No tree changes. Confirm the intended Geni account in your browser before proceeding.</p><form method="post" action="/discover/start"><button>Discover current Geni account</button></form>',
+        200, { "referrer-policy": "strict-origin" });
       return page(
         '<h1>Choose connection</h1><p>Confirm the intended Geni account in your own browser. Each fixed destination is separate. No automatic account detection.</p><form method="post" action="/start"><button>Connect primary</button></form><form method="post" action="/connections/secondary/start"><button>Connect secondary (isolated)</button></form><form method="post" action="/connections/tertiary/start"><button>Connect tertiary (isolated)</button></form>',
         200,
@@ -484,18 +493,20 @@ export async function handle(
       );
     }
     const selectedPath = url.pathname.match(/^\/connections\/([a-z]+)\/start$/);
-    if (request.method === "POST" && (url.pathname === "/start" || selectedPath)) {
+    if (request.method === "POST" && (url.pathname === "/start" || selectedPath || url.pathname === "/discover/start")) {
+      const discovery = url.pathname === "/discover/start";
+      if (discovery !== (env.DISCOVERY_ONLY === "true")) fail();
       if (url.search) fail();
-      const destination = url.pathname === "/start" ? "primary" : selectedPath[1];
-      if (!Object.hasOwn(CONNECTIONS, destination) || (selectedPath && destination === "primary")) fail();
+      const destination = discovery ? undefined : url.pathname === "/start" ? "primary" : selectedPath[1];
+      if (!discovery && (!Object.hasOwn(CONNECTIONS, destination) || (selectedPath && destination === "primary"))) fail();
       const selected = CONNECTIONS[destination];
-      if (destination !== "primary" && !/^profile-[0-9]{1,30}$/.test(env[selected.expectedOwner] || "")) fail();
+      if (!discovery && destination !== "primary" && !/^profile-[0-9]{1,30}$/.test(env[selected.expectedOwner] || "")) fail();
       diagnostic.stage = "geni-origin";
       if (request.headers.get("Origin") !== cfg.origin) fail();
       const nonce = random();
       const cookie = random();
       diagnostic.stage = "geni-state-issue";
-      await stateRequest(env, nonce, "issue", subject, await digest(cookie), { destination });
+      await stateRequest(env, nonce, "issue", subject, await digest(cookie), discovery ? { purpose: "discover" } : { purpose: "connect", destination });
       const target = new URL(GENI + "authorize");
       target.search = new URLSearchParams({
         client_id: env.GENI_CLIENT_ID,
@@ -538,7 +549,10 @@ export async function handle(
         subject,
         await digest(cookie),
       );
-      if (!saved || !Object.hasOwn(CONNECTIONS, saved.destination)) fail();
+      if (!saved || !["connect", "discover"].includes(saved.purpose)) fail();
+      const discovery = saved.purpose === "discover";
+      if (discovery !== (env.DISCOVERY_ONLY === "true")) fail();
+      if (discovery ? saved.destination !== undefined : !Object.hasOwn(CONNECTIONS, saved.destination)) fail();
       // Destination comes only from consumed server state, never callback input.
       if (url.searchParams.has("destination") || url.searchParams.has("connection")) fail();
       const selected = CONNECTIONS[saved.destination];
@@ -565,6 +579,23 @@ export async function handle(
       credential(token.refresh_token);
       if (!Number.isSafeInteger(token.expires_in) || token.expires_in <= 0)
         fail();
+      if (discovery) {
+        diagnostic.stage = "geni-owner";
+        const owner = await responseJson(await deps.fetcher(
+          "https://www.geni.com/api/profile?fields=id,first_name,last_name,merge_pending,merged_into", {
+            method: "GET", redirect: "manual",
+            headers: { Authorization: "Bearer " + token.access_token, Accept: "application/json" },
+          }));
+        if (typeof owner.id !== "string" || !/^profile-[0-9]{1,30}$/.test(owner.id) || owner.merge_pending !== false ||
+            (owner.merged_into !== undefined && owner.merged_into !== null) || owner.results !== undefined ||
+            typeof owner.first_name !== "string" || !owner.first_name.trim() || owner.first_name.length > 200 ||
+            (owner.last_name !== undefined && (typeof owner.last_name !== "string" || owner.last_name.length > 200))) fail();
+        return page("<h1>Identity discovered, not connected</h1><p>Verify this is the account you personally intended. This does not establish a stored connection or authorize a tree change.</p><p>Canonical ID: " +
+          escapeHtml(owner.id) + "</p><p>Name: " + escapeHtml(owner.first_name + " " + (owner.last_name || "")) +
+          "</p><p>Pending merge: false. No token saved. No token displayed.</p>", 200, {
+            "set-cookie": cookieHeader(COOKIE, "", 0)
+          });
+      }
       if (selected.expectedOwner && (saved.destination !== "primary" || env.PRIMARY_OWNER_NODE !== undefined)) {
         diagnostic.stage = "geni-owner";
         const expected = env[selected.expectedOwner];
