@@ -77,3 +77,8 @@ SECTION_DIGESTS = {'Decision 1: protected job, immutable private approval record
 def test_entire_reviewed_section_sentence_pin(section, expected):
     part = ' '.join(TEXT.split('## ' + section + '\n', 1)[1].split('\n## ', 1)[0].split())
     assert sha256(part.encode()).hexdigest() == expected
+
+
+def test_whole_reviewed_document_including_title_date_and_preamble():
+    # Normalized whole-file approval pin, not runtime or authority proof.
+    assert sha256(' '.join(TEXT.split()).encode()).hexdigest() == 'b8c348d519bad325575cd0f70069c7722401f04d5c41074921414cac09a46161'
