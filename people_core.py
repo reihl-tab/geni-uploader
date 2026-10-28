@@ -27,8 +27,22 @@ def text(value, limit=160):
 
 
 def digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'),
-                                     ensure_ascii=False).encode()).hexdigest()
+    # Bound recursion before JSON serialization. Preserve existing canonical bytes.
+    def depth(item, level=0):
+        require(level <= 32)
+        if type(item) is dict:
+            for key, leaf in item.items():
+                require(type(key) is str)
+                depth(leaf, level + 1)
+        elif type(item) in (list, tuple):
+            for leaf in item:
+                depth(leaf, level + 1)
+    try:
+        depth(value)
+        return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'),
+                                         ensure_ascii=False).encode()).hexdigest()
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise Blocked('offline parent hash blocked; unsupported or overdeep input') from exc
 
 
 def validate(data):
