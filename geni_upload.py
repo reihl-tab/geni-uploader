@@ -438,7 +438,7 @@ def verify_profile(token, pid, expect_name):
                            "matches the expected name - target SKIPPED "
                            f"(observed name fields: {observed_name_fields(p)}; "
                            f"response keys: {observed_response_keys(p)})")
-        return pid, name
+        return pid, name or profile_name_surface(p)
     g = execute("GET", "profile", f"{API_BASE}/profile-g{pid}", token)
     gobj = g
     if isinstance(gobj, dict) and isinstance(gobj.get("results"), list):
@@ -447,7 +447,8 @@ def verify_profile(token, pid, expect_name):
             and str(gobj.get("guid") or "") == pid
             and str(gobj.get("id") or "")
             and name_matches(profile_name_surface(gobj), expect_name)):
-        return profile_node_number(gobj["id"]), gobj.get("display_name") or ""
+        return (profile_node_number(gobj["id"]),
+                gobj.get("display_name") or profile_name_surface(gobj))
     raise ApiError(f"profile {pid}: not served as a node id and not "
                    "resolvable as a guid (profile-g) with a matching "
                    "identity - target SKIPPED")
@@ -561,7 +562,7 @@ def status_path(manifest_path):
     return os.path.join(os.path.dirname(os.path.abspath(manifest_path)), STATUS_NAME)
 
 
-def load_status(manifest_path):
+def load_status(manifest_path, strict=False):
     """Repo-backed per-item completion record, written next to the manifest.
     Items recorded here are treated as done by every future run, anywhere."""
     import yaml
@@ -571,6 +572,8 @@ def load_status(manifest_path):
             d = yaml.safe_load(f)
         if isinstance(d, dict) and isinstance(d.get("items"), dict):
             return d
+        if strict:
+            raise ApiError("status file has invalid structure; manual review required")
     return {"items": {}}
 
 
@@ -773,7 +776,14 @@ def _cmd_plan(args, summary):
     m = load_manifest(args.manifest)
     summary["counts"] = plan_report.upload_counts(m)
     summary["checks"]["schema"] = "pass"
-    summary["checks"]["preconditions"] = "not_required"
+    summary["checks"]["preconditions"] = "pass"
+    status = load_status(args.manifest, strict=True)
+    state = load_state(getattr(args, "state", STATE_DEFAULT))
+    if (not isinstance(state, dict)
+            or not isinstance(state.get("uploaded", []), list)
+            or not isinstance(state.get("uncertain", []), list)
+            or not isinstance(state.get("pending", {}), dict)):
+        raise ApiError("state file has invalid structure; manual review required")
     token = get_token(args)
     # No verdict up front: VERIFIED is decided only AFTER every profile GET
     # actually succeeded (a 401 must never print under a VERIFIED header).
@@ -794,14 +804,47 @@ def _cmd_plan(args, summary):
             via = " (resolved via guid)" if node_id != pid else ""
             print(f"  profile {pid}: OK ({name}){via}")
             for kind in ("documents", "photos"):
+                items = t.get(kind) or []
+                if not items:
+                    print(f"    {kind}: no proposed sources; listing not required")
+                    continue
                 tagged = list_tagged(token, node_id, kind)
                 if tagged is None:
                     summary["checks"]["listing"] = "fail"
-                    print(f"    WARNING: {kind} listing unavailable; "
-                          "idempotency relies on state file only")
-                    continue
-                for item in t.get(kind) or []:
-                    if anchor(item, kind) in tagged:
+                    print(f"    WARNING: required {kind} listing unavailable; NOT READY")
+                for item in items:
+                    key = f"{pid}:{kind}:{item['title']}"
+                    rec = status["items"].get(key) or {}
+                    local_pending = state.get("pending", {}).get(key)
+                    if local_pending:
+                        rec = {"blocked": True}
+                    if not isinstance(rec, dict):
+                        rec = {"blocked": True}
+                    present = tagged is not None and anchor(item, kind) in tagged
+                    recorded_done = (rec.get("status") in ("uploaded", "resolved")
+                                     or key in state.get("uploaded", []))
+                    blocked = (rec.get("status") not in
+                               (None, "not_found", "uploaded", "resolved")
+                               or (key in state.get("uncertain", [])
+                                   and rec.get("status") not in
+                                   ("not_found", "uploaded", "resolved"))
+                               or rec.get("blocked") or rec.get("create_intent")
+                               and not recorded_done)
+                    if blocked:
+                        verdict = "BLOCKED journal/status requires review"
+                        summary["checks"]["preconditions"] = "fail"
+                    elif recorded_done and not present:
+                        verdict = "BLOCKED recorded done but absent from listing"
+                        summary["checks"]["preconditions"] = "fail"
+                    elif tagged is None:
+                        verdict = "UNKNOWN duplicate listing unavailable"
+                    elif present:
+                        verdict = "SKIP already present in server listing"
+                    else:
+                        verdict = "NEW absent from server listing; no blocking status"
+                    print(f"    source {item['title']!r}: schema/file=pass; "
+                          f"target=pass; duplicate/status={verdict}")
+                    if present and not blocked:
                         print(f"    SKIP (already tagged): {item['title']}")
         except ThrottledError:
             raise  # throttle aborts the whole plan: no further requests
@@ -815,8 +858,11 @@ def _cmd_plan(args, summary):
     summary["checks"]["identity"] = "pass"
     summary["complete"] = True
     print(f"verification: OK - all {total} profile(s) confirmed with Geni")
+    ready = all(v in ("pass", "not_required")
+                for v in summary["checks"].values())
+    print("source guards: " + ("PASS" if ready else "NOT READY"))
     print("No writes performed in plan mode.")
-    return 0
+    return 0 if ready else 1
 
 
 def durable_upload(item, kind, base, add_kind, tag_kind, pid, node_id,
@@ -1407,7 +1453,8 @@ def main():
             "--log", default=None,
             help="diagnostic log file (run default: geni-upload-run.log next to "
                  "the state file; plan default: stdout only)")
-    sub.choices["run"].add_argument("--state", default=STATE_DEFAULT)
+    for name in ("plan", "run"):
+        sub.choices[name].add_argument("--state", default=STATE_DEFAULT)
     sub.choices["run"].add_argument("--smoke", action="store_true",
                                     help="upload only the first item, then stop")
     sub.choices["run"].add_argument("--no-repo-sync", action="store_true",
