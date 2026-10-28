@@ -216,7 +216,7 @@ jobs:
         run: |
           set -euo pipefail
           # selftest deliberately gets a nonzero container result.
-          if [ "$MODE" != "plan" ] && [ "$MODE" != "details-plan" ]; then exit 0; fi
+          if [ "$MODE" = "selftest" ]; then exit 0; fi
           RESULT="$(cat "$RUNNER_TEMP/container-exit-code")"
           if ! [[ "$RESULT" =~ ^[0-9]+$ ]] || [ "$RESULT" -gt 255 ]; then
             echo "protected container outcome unavailable; failing closed"
