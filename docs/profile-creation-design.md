@@ -270,3 +270,108 @@ Both exact-head full-diff reviews, every finding resolved, green CI and separate
 human Approve precede merge. Implementation PR adds schema docs, minor version,
 CHANGELOG and coverage>=80%. Image build/review/digest pin and isolated workflow
 wiring are separate release work. No feature enablement or run from this design.
+
+## Amendment v0.5: documented self discovery and proposed free Actions route
+
+28 October 2026. Design only. No deployment, dependency change, live probe or
+feature enablement. The local-only v0.4 route remains the baseline until a separate
+implementation and security review approve the alternative below. This amendment
+does not pretend private branch rulesets are available on a Free personal account.
+
+### Self discovery: documentation found, response verification still required
+
+Geni's official JavaScript API guide explicitly says that omitting an ID applies
+the action to the current user's data, and shows `/profile` returning the current
+user's profile. This establishes a documented self-discovery endpoint, rather than
+using the nearly empty `/user` response or trusting a matching name:
+https://www.geni.com/platform/developer/help/sdk_js?version=1
+
+An older developer discussion corroborates `/profile?fields=id`, but is not the
+primary contract: https://www.geni.com/platform/developer/forum/topic?topic_id=54
+
+The implementation may build GET-self parsing offline against strict synthetic
+fixtures. A human-run read-only plan must still receive and validate canonical
+`id`/`guid`, resolve the declared owner and anchor to the same node, and fail on
+missing, redirected, merged, ambiguous or conflicting identity. This discovery
+narrows blocker 1; it does not prove a live response or relax any identity guard.
+
+Blockers 2-4 remain unresolved: complete parent visibility, add-parent union/slot
+selection (especially the second parent), and explicit privacy/living readback.
+Public endpoint documentation describes fields but does not supply those missing
+proofs. No synthetic test, empty graph or absent boolean fills the gap. A separately
+authorized human-observed response or stronger vendor documentation is required
+before production creation. There is no agent probe or trial write in this design.
+
+### Proposed free alternative: separate append-only safety journal
+
+This is an alternative architecture for later human-only Actions execution, not an
+exception that weakens v0.4's git permissions. It removes writable private git
+credentials from the runner entirely. It needs its own implementation, threat
+review, release and deployment approval before replacing local-only execution.
+
+- Use a separate SQLite-backed Durable Object journal service. Workers Free
+  supports this backend and fails further operations at free-tier limits:
+  https://developers.cloudflare.com/durable-objects/platform/pricing/
+- Per-object storage is transactional and strongly consistent; use atomic
+  compare-and-set transitions, not a read followed by an unguarded write:
+  https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/
+- Authenticate each human-dispatched job with a verified GitHub OIDC identity:
+  https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect
+  The implementation must pin issuer and audience, validate signature/key
+  rotation, expiry and not-before, repository/owner immutable IDs, exact reviewed
+  workflow identity and commit, event, actor and triggering actor via authoritative
+  run metadata. Do not assume the textual subject format is stable. A new
+  repository or ref with a look-alike name must not pass. Unknown claims fail.
+- The journal service is not a Geni proxy. It holds no Geni token, performs no
+  Geni request and has no general-purpose URL, command or file endpoint. The runner
+  has a distinct read-only private data credential. Do not reuse another tree's
+  connection, write token, application or approval record.
+- Key each ledger by canonical owner, manifest/schema hash, immutable data SHA,
+  operation ID and ordinal. Bind the exact payload hash, approved count (cap 2),
+  anchor, graph fingerprint, reviewed workflow/image digest, job/run attempt,
+  expiry and private data-approval reference into the receipt. Receipt tokens are
+  private credentials, not public artifacts or logs. Approval of a diagram's
+  appearance alone is not approval of the data or a write.
+- Permitted monotonic transitions are prepared -> intent -> acknowledged ->
+  verified (or blocked). Persist and independently read back an intent before the
+  one allowed POST; return success only after durable storage confirms it. A
+  failure or timeout at intent acknowledgement stops before POST. An intent
+  authorizes no replay, even when the runner may have died before sending.
+- Record acknowledged IDs durably before GET readback. Acknowledged IDs permit
+  GET-only resume, not another create. Never reset, delete, reuse or expire-away a
+  ledger that has an intent. No public resolution API can clear an uncertain
+  intent. Manual review may bind a found ID to it; creation retry remains outside
+  phase 1. Changed data hashes do not erase earlier owner/anchor intent history;
+  a new proposal must check all prior blocked operations, not hide behind a new key.
+- Enforce one active writer for the owner/anchor across runs and attempts. Validate
+  compare-and-set versions, expected graph deltas and receipt expiry before each
+  new intent and immediately before POST. An already acknowledged ID is persisted
+  and verified by GET even after expiry. Storage unavailability, quota, policy
+  mismatch or concurrency conflict stops new creation; no fallback journal path.
+- A private encrypted git export may aid auditing after each transition. It is
+  not the authoritative safety journal, cannot unlock a blocked operation and
+  does not justify a writable data/state PAT in the runner. If export fails, the
+  operator must hear the audit failure; never hide it behind a successful write.
+- Operators with infrastructure administration can destroy or replace a store.
+  This is an explicit residual trust boundary, not an immutable-ledger claim.
+  Separate deployment/admin credentials from runtime credentials; no runtime
+  delete/schema-reset endpoint. Journal retention, encryption at rest, backups,
+  recovery and administrator access require an explicit security review. No
+  family names, IDs or raw responses go into public service logs or telemetry.
+- No alarms, schedules, webhooks or journal callback may trigger Geni creation.
+  A human starts every plan/run. A plan and its confirmation stay within an
+  authenticated same-run approval flow or a separately reviewed signed receipt
+  transport; do not add a cross-run plaintext artifact to make Actions convenient.
+
+The implementation issue should split local schema/receipt/journal code from
+vendor adapters, human workflow wiring and service deployment. Offline work can
+proceed while vendor blockers remain, but the production adapter must fail closed
+with a fixed disabled outcome until every blocker and release gate is met.
+
+Required added tests: OIDC claim/signature failures and key rotation; alternate
+repo/ref/workflow/run attempts; CAS races and multi-run owner locks; quota/network
+failure before intent confirmation; kill before/after POST and acknowledgement;
+new manifest hash attempting to evade old uncertain intent; explicit no-delete/no-
+reset; no Geni network from the service; no writable git token in the runner; and
+no names, IDs, URLs, secrets or exception strings in public diagnostics. Reuse the
+existing strict schema, graph, field/private-readback and no-retry mutation tests.
