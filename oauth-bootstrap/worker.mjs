@@ -4,6 +4,13 @@ import { jwtVerify, SignJWT } from "jose";
 const GENI = "https://www.geni.com/platform/oauth/";
 const GH =
   "https://api.github.com/repos/reihlinstinct/geni-uploader/actions/secrets";
+export const CONNECTIONS = Object.freeze({
+  primary: Object.freeze({ access: "GENI_ACCESS_TOKEN", bundle: "GENI_OAUTH_REFRESH_BUNDLE", expectedOwner: "PRIMARY_OWNER_NODE" }),
+  secondary: Object.freeze({ access: "GENI_SECONDARY_ACCESS_TOKEN", bundle: "GENI_SECONDARY_OAUTH_REFRESH_BUNDLE",
+    expectedOwner: "SECONDARY_OWNER_NODE" }),
+  tertiary: Object.freeze({ access: "GENI_TERTIARY_ACCESS_TOKEN", bundle: "GENI_TERTIARY_OAUTH_REFRESH_BUNDLE",
+    expectedOwner: "TERTIARY_OWNER_NODE" }),
+});
 const COOKIE = "__Host-oauth-bind";
 const LOGIN_COOKIE = "__Host-login-bind";
 const SESSION_COOKIE = "__Host-bootstrap-session";
@@ -42,6 +49,7 @@ const STAGES = new Set([
   "geni-state",
   "geni-exchange",
   "geni-token-shape",
+  "geni-owner",
   "writer-key",
   "writer-bundle",
   "writer-access",
@@ -73,6 +81,12 @@ const page = (body, status = 200, extra = {}) =>
 
 function config(env) {
   const origin = new URL(env.CALLBACK_ORIGIN);
+  // Enabling any additional destination also pins primary, preventing a wrong
+  // button/account from replacing the existing primary connection.
+  const ownerPins = Object.values(CONNECTIONS).map(c => env[c.expectedOwner]).filter(v => v !== undefined);
+  if (ownerPins.length && (!/^profile-[0-9]{1,30}$/.test(env.PRIMARY_OWNER_NODE || "") ||
+      ownerPins.some(v => typeof v !== "string" || !/^profile-[0-9]{1,30}$/.test(v)) ||
+      new Set(ownerPins).size !== ownerPins.length)) fail();
   if (
     origin.protocol !== "https:" ||
     origin.origin !== env.CALLBACK_ORIGIN ||
@@ -288,7 +302,7 @@ async function responseJson(response) {
 
 async function writeSecret(name, value, env, fetcher, diagnostic, writeStage) {
   diagnostic.stage = "writer-key";
-  if (!["GENI_OAUTH_REFRESH_BUNDLE", "GENI_ACCESS_TOKEN"].includes(name))
+  if (!Object.values(CONNECTIONS).some((c) => c.access === name || c.bundle === name))
     fail();
   const headers = {
     Authorization: "Bearer " + env.GITHUB_WRITER,
@@ -325,6 +339,8 @@ export class OneTimeState {
         typeof data.subject !== "string" ||
         !data.subject ||
         data.subject.length > 128 ||
+        (data.payload?.destination !== undefined &&
+          !Object.hasOwn(CONNECTIONS, data.payload.destination)) ||
         (data.payload?.verifier !== undefined &&
           !/^[a-f0-9]{64}$/.test(data.payload.verifier)) ||
         !/^[a-f0-9]{64}$/.test(data.binding)
@@ -462,18 +478,24 @@ export async function handle(
     }
     if (request.method === "GET" && url.pathname === "/" && !url.search) {
       return page(
-        '<h1>Connect OAuth</h1><p>Confirm the correct Geni account in your own browser. Login and 2FA stay with Geni. No family data is read here.</p><form method="post" action="/start"><button>Connect to Geni</button></form>',
+        '<h1>Choose connection</h1><p>Confirm the intended Geni account in your own browser. Each fixed destination is separate. No automatic account detection.</p><form method="post" action="/start"><button>Connect primary</button></form><form method="post" action="/connections/secondary/start"><button>Connect secondary (isolated)</button></form><form method="post" action="/connections/tertiary/start"><button>Connect tertiary (isolated)</button></form>',
         200,
         { "referrer-policy": "strict-origin" },
       );
     }
-    if (request.method === "POST" && url.pathname === "/start") {
+    const selectedPath = url.pathname.match(/^\/connections\/([a-z]+)\/start$/);
+    if (request.method === "POST" && (url.pathname === "/start" || selectedPath)) {
+      if (url.search) fail();
+      const destination = url.pathname === "/start" ? "primary" : selectedPath[1];
+      if (!Object.hasOwn(CONNECTIONS, destination) || (selectedPath && destination === "primary")) fail();
+      const selected = CONNECTIONS[destination];
+      if (destination !== "primary" && !/^profile-[0-9]{1,30}$/.test(env[selected.expectedOwner] || "")) fail();
       diagnostic.stage = "geni-origin";
       if (request.headers.get("Origin") !== cfg.origin) fail();
       const nonce = random();
       const cookie = random();
       diagnostic.stage = "geni-state-issue";
-      await stateRequest(env, nonce, "issue", subject, await digest(cookie));
+      await stateRequest(env, nonce, "issue", subject, await digest(cookie), { destination });
       const target = new URL(GENI + "authorize");
       target.search = new URLSearchParams({
         client_id: env.GENI_CLIENT_ID,
@@ -501,20 +523,25 @@ export async function handle(
         url.searchParams.getAll("state").length !== 1 ||
         url.searchParams.getAll("code").length !== 1 ||
         url.searchParams.has("error") ||
-        url.searchParams.has("status")
+        url.searchParams.has("status") ||
+        [...url.searchParams.keys()].some((key) => !["code", "state", "expires_in", "scope"].includes(key))
       )
         fail();
       const cookie = cookies[0].slice(COOKIE.length + 1);
       if (!/^[a-f0-9]{64}$/.test(cookie)) fail();
       const code = credential(url.searchParams.get("code"));
       diagnostic.stage = "geni-state";
-      await stateRequest(
+      const saved = await stateRequest(
         env,
         url.searchParams.get("state"),
         "consume",
         subject,
         await digest(cookie),
       );
+      if (!saved || !Object.hasOwn(CONNECTIONS, saved.destination)) fail();
+      // Destination comes only from consumed server state, never callback input.
+      if (url.searchParams.has("destination") || url.searchParams.has("connection")) fail();
+      const selected = CONNECTIONS[saved.destination];
       diagnostic.stage = "geni-exchange";
       const token = await responseJson(
         await deps.fetcher(GENI + "request_token", {
@@ -538,6 +565,19 @@ export async function handle(
       credential(token.refresh_token);
       if (!Number.isSafeInteger(token.expires_in) || token.expires_in <= 0)
         fail();
+      if (selected.expectedOwner && (saved.destination !== "primary" || env.PRIMARY_OWNER_NODE !== undefined)) {
+        diagnostic.stage = "geni-owner";
+        const expected = env[selected.expectedOwner];
+        if (!/^profile-[0-9]{1,30}$/.test(expected || "")) fail();
+        const owner = await responseJson(await deps.fetcher(
+          "https://www.geni.com/api/profile?fields=id,merge_pending,merged_into", {
+            method: "GET", redirect: "manual",
+            headers: { Authorization: "Bearer " + token.access_token, Accept: "application/json" },
+          }));
+        if (owner.id !== expected || owner.merge_pending !== false ||
+            (owner.merged_into !== undefined && owner.merged_into !== null) ||
+            owner.results !== undefined) fail();
+      }
       const bundle = {
         schema: 1,
         client_id: env.GENI_CLIENT_ID,
@@ -548,7 +588,7 @@ export async function handle(
         pending_expires_at: Math.floor(Date.now() / 1000) + token.expires_in,
       };
       await writeSecret(
-        "GENI_OAUTH_REFRESH_BUNDLE",
+        selected.bundle,
         JSON.stringify(bundle),
         env,
         deps.fetcher,
@@ -556,7 +596,7 @@ export async function handle(
         "writer-bundle",
       );
       await writeSecret(
-        "GENI_ACCESS_TOKEN",
+        selected.access,
         token.access_token,
         env,
         deps.fetcher,
@@ -566,7 +606,7 @@ export async function handle(
       delete bundle.pending_access_token;
       delete bundle.pending_expires_at;
       await writeSecret(
-        "GENI_OAUTH_REFRESH_BUNDLE",
+        selected.bundle,
         JSON.stringify(bundle),
         env,
         deps.fetcher,
