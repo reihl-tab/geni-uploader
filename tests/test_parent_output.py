@@ -24,6 +24,7 @@ def test_adapter_never_promotes_recent_matching_claim_to_authority(monkeypatch):
     assert result['create_enabled'] is False and result['source_authenticated'] is False
     assert result['hidden_parent_completeness'] == 'unknown'
     assert result['supplied_connection_matches'] is True
+    assert result['name_checked'] is False
     assert not result['live_checks_performed_by_reviewer']
     assert not any(word in str(result) for word in ['ZZRoot', '99123', 'ZZisolated'])
 
