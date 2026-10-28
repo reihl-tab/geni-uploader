@@ -138,6 +138,9 @@ jobs:
             fi
             docker run "${DOCKER_ARGS[@]}" "$IMAGE" "${ARGS[@]}"
           ) >> "$RAW" 2>&1 || EXIT=$?
+          # Persist only a bounded numeric result, never raw output.
+          if ! [[ "$EXIT" =~ ^[0-9]+$ ]] || [ "$EXIT" -gt 255 ]; then EXIT=1; fi
+          printf '%s\n' "$EXIT" > "$RUNNER_TEMP/container-exit-code"
           echo "container exit code: $EXIT"
           echo "raw output bytes captured: $(wc -c < "$RAW")"
           if [ "$MODE" = "selftest" ] && [ "$EXIT" -eq 0 ]; then
@@ -206,3 +209,21 @@ jobs:
             exit 1
           fi
           echo "ciphertext committed: yes"
+
+      - name: Report protected container outcome after ciphertext retention
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          # selftest deliberately gets a nonzero container result.
+          if [ "$MODE" != "plan" ] && [ "$MODE" != "details-plan" ]; then exit 0; fi
+          RESULT="$(cat "$RUNNER_TEMP/container-exit-code")"
+          if ! [[ "$RESULT" =~ ^[0-9]+$ ]] || [ "$RESULT" -gt 255 ]; then
+            echo "protected container outcome unavailable; failing closed"
+            exit 1
+          fi
+          if [ "$RESULT" -ne 0 ]; then
+            echo "protected container did not complete successfully; inspect the encrypted log"
+            exit 1
+          fi
+          echo "protected container outcome: success"
