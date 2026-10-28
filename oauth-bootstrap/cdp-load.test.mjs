@@ -58,3 +58,50 @@ test("navigation errors and missing ids fail closed", async () => {
     assert.equal(ws.count(), 0);
   }
 });
+
+
+// #273: bounded helper with cleanup; never-settling regressions.
+
+test("never-settling navigate or load rejects with a fixed value-free timeout", { timeout: 2000 }, async () => {
+  const cases = [
+    () => new Promise(() => {}),
+    async () => ({ frameId: "F1", loaderId: "N" }),
+  ];
+  for (const cdp of cases) {
+    const ws = fakeSocket();
+    const started = Date.now();
+    const error = await navigateAndWaitForLoad(ws, cdp,
+      "https://127.0.0.1:1/x?code=ZZSECRET", { timeoutMs: 50 }).then(() => null, (e) => e);
+    assert.ok(error instanceof Error);
+    assert.equal(error.message, "navigation load timeout");
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(ws.count(), 0);
+  }
+});
+
+test("a successful load clears the timer", async () => {
+  const ws = fakeSocket();
+  const cdp = async () => {
+    ws.emit("Page.lifecycleEvent", { frameId: "F1", loaderId: "N", name: "load" });
+    return { frameId: "F1", loaderId: "N" };
+  };
+  const realClear = globalThis.clearTimeout;
+  let cleared = 0;
+  globalThis.clearTimeout = (t) => { cleared += 1; return realClear(t); };
+  try {
+    await navigateAndWaitForLoad(ws, cdp, "https://127.0.0.1:1/x", { timeoutMs: 3000 });
+  } finally {
+    globalThis.clearTimeout = realClear;
+  }
+  assert.equal(cleared, 1);
+  assert.equal(ws.count(), 0);
+});
+
+test("invalid timeouts are refused before navigating", async () => {
+  for (const timeoutMs of [0, -1, 1.5, "50", null]) {
+    const ws = fakeSocket();
+    await assert.rejects(navigateAndWaitForLoad(ws, () => assert.fail("navigated"),
+      "https://127.0.0.1:1/x", { timeoutMs }), /invalid navigation timeout/);
+    assert.equal(ws.count(), 0);
+  }
+});
