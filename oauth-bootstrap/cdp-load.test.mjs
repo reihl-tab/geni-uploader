@@ -58,3 +58,31 @@ test("navigation errors and missing ids fail closed", async () => {
     assert.equal(ws.count(), 0);
   }
 });
+
+
+// #276: errorText and id-type guards isolated. Each case emits the matching load
+// first, so a removed guard resolves (and fails the assertion) instead of hanging.
+
+test("errorText rejects even when a matching load already arrived", async () => {
+  const ws = fakeSocket();
+  const cdp = async () => {
+    ws.emit("Page.lifecycleEvent", { frameId: "F1", loaderId: "N", name: "load" });
+    return { frameId: "F1", loaderId: "N", errorText: "net::ERR_ZZ" };
+  };
+  await assert.rejects(navigateAndWaitForLoad(ws, cdp, "https://127.0.0.1:1/x"),
+    /navigation failed/);
+  assert.equal(ws.count(), 0);
+});
+
+test("non-string frame or loader ids reject even when a matching load arrived", async () => {
+  for (const [frameId, loaderId] of [[7, "N"], [null, "N"], ["F1", 7], ["F1", null]]) {
+    const ws = fakeSocket();
+    const cdp = async () => {
+      ws.emit("Page.lifecycleEvent", { frameId, loaderId, name: "load" });
+      return { frameId, loaderId };
+    };
+    await assert.rejects(navigateAndWaitForLoad(ws, cdp, "https://127.0.0.1:1/x"),
+      /no frame\/loader id/);
+    assert.equal(ws.count(), 0);
+  }
+});
