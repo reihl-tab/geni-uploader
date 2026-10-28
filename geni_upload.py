@@ -36,6 +36,7 @@ import urllib.parse
 import urllib.request
 
 import plan_report
+import visual_plan
 
 # GENI_API_BASE overrides the API root for end-to-end tests against a local
 # fake server ONLY: it requires GENI_UPLOAD_E2E=1 and a loopback URL, so an
@@ -772,13 +773,15 @@ def cmd_contrast(args):
 
 def cmd_plan(args):
     summary = plan_report.report("plan")
+    visual = visual_plan.new()
     try:
-        return _cmd_plan(args, summary)
+        return _cmd_plan(args, summary, visual)
     finally:
         plan_report.save(summary)
+        visual_plan.save(visual)
 
 
-def _cmd_plan(args, summary):
+def _cmd_plan(args, summary, visual):
     m = load_manifest(args.manifest)
     summary["counts"] = plan_report.upload_counts(m)
     summary["checks"]["schema"] = "pass"
@@ -804,9 +807,11 @@ def _cmd_plan(args, summary):
     total = len(m["targets"])
     failed = 0
     for t in m["targets"]:
+        row = visual_plan.profile(visual)
         pid = str(t["profile_id"])
         try:
             node_id, name = verify_profile(token, pid, t["expect_name"])
+            row["identity"] = "confirmed"
             via = " (resolved via guid)" if node_id != pid else ""
             print(f"  profile {pid}: OK ({name}){via}")
             for kind in ("documents", "photos"):
@@ -848,6 +853,7 @@ def _cmd_plan(args, summary):
                         verdict = "SKIP already present in server listing"
                     else:
                         verdict = "NEW absent from server listing; no blocking status"
+                    visual_plan.source(row, kind, verdict.split()[0].lower())
                     print(f"    source {item['title']!r}: schema/file=pass; "
                           f"target=pass; duplicate/status={verdict}")
                     if present and not blocked:
@@ -863,6 +869,7 @@ def _cmd_plan(args, summary):
         return 1
     summary["checks"]["identity"] = "pass"
     summary["complete"] = True
+    visual["complete"] = True
     print(f"verification: OK - all {total} profile(s) confirmed with Geni")
     ready = all(v in ("pass", "not_required")
                 for v in summary["checks"].values())

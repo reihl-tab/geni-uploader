@@ -178,7 +178,7 @@ def test_optional_summary_failure_preserves_upload_outcome(tmp_path, failure, ou
     destination = tmp_path / 'ZZPrivateMissing' / 'report' if failure == 'path' else tmp_path / 'report'
     monkeypatch.setenv('GENI_PLAN_REPORT', str(destination))
     original = g.ApiError('ZZPrivateOriginal')
-    def plan(args, summary):
+    def plan(args, summary, visual):
         if failure == 'validation':
             summary['counts']['sources'] = 100001
         if outcome == 'raise':
