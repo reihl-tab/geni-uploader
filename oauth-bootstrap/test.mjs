@@ -878,3 +878,8 @@ test('state object rejects invalid or mixed purpose at issuance',async()=>{
   const one=states().one;await assert.rejects(one.fetch(new Request('https://state.invalid/issue',{method:'POST',body:JSON.stringify({subject:'ZZSUBJECT',binding:'a'.repeat(64),payload})})));
  }
 });
+test('discovery cannot claim authorization saved through complete route',async()=>{
+ const r=await handle(request('/complete',{headers:{Cookie:await session()}}),discoveryEnv(),{fetcher:nofetch});assert.equal(r.status,404);assert.doesNotMatch(await r.text(),/Authorization saved/);
+ const normal=await handle(request('/complete',{headers:{Cookie:await session()}}),setup(),{fetcher:nofetch});assert.equal(normal.status,200);
+ const query=await handle(request('/complete?purpose=discover',{headers:{Cookie:await session()}}),setup(),{fetcher:nofetch});assert.equal(query.status,404);
+});

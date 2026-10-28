@@ -15,7 +15,8 @@ test("workerd production entry exercises all external paths without native fetch
     write: false,
     platform: "browser",
   });
-  for (const redirectAt of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+  for (const discovery of [false, true]) {
+  for (const redirectAt of (discovery ? [0, 4, 5] : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])) {
     calls.length = 0;
     const mf = new Miniflare(
       convertV4MiniflareOptions({
@@ -41,7 +42,7 @@ test("workerd production entry exercises all external paths without native fetch
               GITHUB_LOGIN_CLIENT_SECRET: "ZZLOGINSECRET",
               GENI_CLIENT_ID: "ZZCLIENT",
               GENI_APP_SECRET: "ZZSECRET",
-              GITHUB_WRITER: "ZZWRITER",
+              ...(discovery ? { DISCOVERY_ONLY: "true" } : { GITHUB_WRITER: "ZZWRITER" }),
             },
             outboundService: async (req) => {
               const u = new URL(req.url);
@@ -73,6 +74,14 @@ test("workerd production entry exercises all external paths without native fetch
                   refresh_token: "ZZREFRESH",
                   expires_in: 300,
                 });
+              if (u.hostname === "www.geni.com" && u.pathname === "/api/profile") {
+                assert.equal(discovery, true);
+                assert.equal(req.method, "GET");
+                assert.equal(req.headers.get("Authorization"), "Bearer ZZACCESS");
+                assert.equal(u.search, "?fields=id,first_name,last_name,merge_pending,merged_into");
+                return Response.json({id:"profile-99123",first_name:"ZZRoot",last_name:"ZZPerson",merge_pending:false});
+              }
+              if (discovery) assert.fail("discovery attempted writer request");
               if (u.pathname.endsWith("/public-key"))
                 return Response.json({
                   key: sodium.to_base64(
@@ -119,7 +128,7 @@ test("workerd production entry exercises all external paths without native fetch
         .getSetCookie()
         .find((x) => x.startsWith("__Host-bootstrap-session="))
         .split(";")[0];
-      const start = await mf.dispatchFetch(origin + "/start", {
+      const start = await mf.dispatchFetch(origin + (discovery ? "/discover/start" : "/start"), {
         method: "POST",
         headers: { Origin: origin, Cookie: session },
         redirect: "manual",
@@ -135,6 +144,15 @@ test("workerd production entry exercises all external paths without native fetch
         assert.equal(done.status, 400);
         assert.equal(calls.length, redirectAt === 2 ? 3 : redirectAt);
         assert.doesNotMatch(await done.text(), /ZZSENSITIVE|evil.invalid/);
+        continue;
+      }
+      if (discovery) {
+        assert.equal(done.status,200);
+        const text=await done.text();
+        assert.match(text,/Identity discovered, not connected/);
+        assert.match(text,/profile-99123/);
+        assert.doesNotMatch(text,/ZZACCESS|ZZREFRESH|ZZCODE/);
+        assert.deepEqual(calls,["POST github.com/login/oauth/access_token","GET api.github.com/user","DELETE api.github.com/applications/ZZLOGINCLIENT/token","POST www.geni.com/platform/oauth/request_token","GET www.geni.com/api/profile"]);
         continue;
       }
       assert.equal(done.status, 303, await done.text());
@@ -153,5 +171,6 @@ test("workerd production entry exercises all external paths without native fetch
     } finally {
       await mf.dispose();
     }
+  }
   }
 });

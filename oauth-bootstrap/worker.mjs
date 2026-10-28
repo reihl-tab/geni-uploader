@@ -650,7 +650,7 @@ export async function handle(
           COOKIE + "=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0",
       });
     }
-    if (request.method === "GET" && url.pathname === "/complete")
+    if (request.method === "GET" && url.pathname === "/complete" && !url.search && env.DISCOVERY_ONLY !== "true")
       return page(
         "<h1>Authorization saved</h1><p>Next: a new human-approved plan. This page does not confirm account identity or upload safety.</p>",
       );
