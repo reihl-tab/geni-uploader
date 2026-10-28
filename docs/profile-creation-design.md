@@ -1,7 +1,8 @@
 # New-profile creation: parent-only phase 1
 
-Version: 0.4, 2026-10-27. Status: design only, not implemented or enabled. This
-replaces versions 0.2 and 0.3 in full. No live API calls or test writes.
+Version: 0.5, 2026-10-28. Status: design only, not implemented or enabled. This
+includes the v0.4 baseline and v0.5 amendment below, replacing versions 0.2 and
+0.3 in full. No live API calls or test writes.
 
 ## Goal and roles
 
