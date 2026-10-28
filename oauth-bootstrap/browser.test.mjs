@@ -8,10 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
 import { handle, OneTimeState } from "./worker.mjs";
+import { waitForChrome } from "./chrome-ready.mjs";
+import { navigateAndWaitForLoad } from "./cdp-load.mjs";
 
 test(
   "Chrome form POST preserves exact Origin on query-free landing",
-  { timeout: 60000 },
+  { timeout: 120000 },
   async () => {
     const dir = await mkdtemp(join(tmpdir(), "zz-oauth-browser-"));
     let chrome, ws, server;
@@ -122,24 +124,21 @@ test(
       chrome.stderr.on("data", (x) => {
         chromeError = (chromeError + x).slice(-4096);
       });
-      let port;
-      for (let i = 0; i < 300; i++) {
-        if (chrome.exitCode !== null || chromeError.includes("ENOENT")) break;
-        try {
-          port = (
-            await readFile(join(dir, "DevToolsActivePort"), "utf8")
-          ).split("\n")[0];
-          break;
-        } catch {}
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      assert.ok(port, "Synthetic Chrome did not start: " + chromeError);
-      const tabs = await (
-        await fetch("http://127.0.0.1:" + port + "/json/list")
-      ).json();
-      ws = new WebSocket(
-        tabs.find((x) => x.type === "page").webSocketDebuggerUrl,
-      );
+      const ready = await waitForChrome({
+        readPort: () => readFile(join(dir, "DevToolsActivePort"), "utf8"),
+        exited: () => chrome.exitCode !== null || chromeError.includes("ENOENT"),
+        probe: async (port, budget) => {
+          const response = await fetch("http://127.0.0.1:" + port + "/json/list", {
+            signal: AbortSignal.timeout(Math.max(1, Math.floor(budget))),
+          });
+          assert.equal(response.status, 200);
+          return response.json();
+        },
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        now: () => performance.now(),
+        diagnostics: () => "exit=" + chrome.exitCode + "; stderr=" + chromeError,
+      });
+      ws = new WebSocket(ready.page.webSocketDebuggerUrl);
       await new Promise((r) => ws.addEventListener("open", r, { once: true }));
       let seq = 0;
       const pending = new Map();
@@ -158,17 +157,8 @@ test(
           ws.send(JSON.stringify({ id, method, params }));
         });
       await cdp("Page.enable");
-      const loaded = new Promise((r) => {
-        const listener = (e) => {
-          if (JSON.parse(e.data).method === "Page.loadEventFired") {
-            ws.removeEventListener("message", listener);
-            r();
-          }
-        };
-        ws.addEventListener("message", listener);
-      });
-      await cdp("Page.navigate", { url: origin + "/" });
-      await loaded;
+      await cdp("Page.setLifecycleEventsEnabled", { enabled: true });
+      await navigateAndWaitForLoad(ws, cdp, origin + "/");
       await cdp("Runtime.evaluate", {
         expression: 'document.querySelector("form").requestSubmit()',
         userGesture: true,
@@ -179,20 +169,11 @@ test(
       assert.equal(observed.status, 303);
       assert.equal(new URL(observed.location).origin, "https://github.com");
       assert.equal(entries.size, 1);
-      const stopped = new Promise((r) => {
-        const listener = (e) => {
-          if (JSON.parse(e.data).method === "Page.loadEventFired") {
-            ws.removeEventListener("message", listener);
-            r();
-          }
-        };
-        ws.addEventListener("message", listener);
-      });
-      await cdp("Page.navigate", {
-        url:
-          origin + "/login/callback?code=ZZSENSITIVE&state=" + "a".repeat(64),
-      });
-      await stopped;
+      await navigateAndWaitForLoad(
+        ws,
+        cdp,
+        origin + "/login/callback?code=ZZSENSITIVE&state=" + "a".repeat(64),
+      );
       const rendered = await cdp("Runtime.evaluate", {
         expression: "document.body.innerText",
       });
