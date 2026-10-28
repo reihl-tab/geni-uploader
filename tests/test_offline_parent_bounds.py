@@ -1,6 +1,7 @@
 import hashlib
 import http.client
 import json
+import os
 import socket
 import subprocess
 import urllib.request
@@ -41,6 +42,9 @@ def test_proposal_render_envelope_never_network_or_subprocess(monkeypatch):
                          (urllib.request, 'urlopen'), (urllib.request.OpenerDirector, 'open'),
                          (http.client.HTTPConnection, 'request')]:
         monkeypatch.setattr(target, name, deny)
+    for name in dir(os):
+        if name in ('system', 'popen') or name.startswith(('exec', 'spawn')):
+            monkeypatch.setattr(os, name, deny)
     plan, value = fixture()  # also constructs and validates a proposal
     assert '<html' in parent_plan.render(plan)
     envelope = parent_envelope.draft(plan, value)
