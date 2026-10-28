@@ -274,3 +274,50 @@ def test_validate_alone_rejects_empty_window(window):
     rec['pins']['expires_at'] = T0 + window
     with pytest.raises(Blocked):
         ar.validate(rec)
+
+
+# Review follow-ups (#261): the same invalid value on BOTH record and expectation,
+# so only the shape guard can block, plus validate-alone checks.
+
+def both(key, value):
+    rec, exp = record(), pins()
+    rec['pins'][key] = exp[key] = value
+    return rec, exp
+
+
+@pytest.mark.parametrize('key,value', [
+    ('owner', 'person-999001'), ('owner', 'profile-0'), ('owner', '../profile-1'),
+    ('connection_id', '../path'), ('connection_id', 'ZZ secondary'), ('connection_id', ''),
+    ('connection_id', 'x' * 101),
+    ('run_id', '0'), ('run_id', '01'), ('run_id', '1' * 21), ('run_id', '-1'),
+])
+def test_identity_syntax_guards_with_matching_expectation(key, value):
+    rec, exp = both(key, value)
+    with pytest.raises(Blocked):
+        run(rec, exp)
+    with pytest.raises(Blocked):
+        ar.validate(rec)
+
+
+@pytest.mark.parametrize('issued,expires', [(0, 600), (-600, 0), (2**40 - 600, 2**40),
+                                            (2**40, 2**40 + 600)])
+def test_time_bounds_with_matching_expectation(issued, expires):
+    rec, exp = record(), pins()
+    for target in (rec['pins'], exp):
+        target['issued_at'], target['expires_at'] = issued, expires
+    with pytest.raises(Blocked):
+        run(rec, exp, now=max(issued, 1))
+    with pytest.raises(Blocked):
+        ar.validate(rec)
+
+
+@pytest.mark.parametrize('role', ar.ROLES)
+@pytest.mark.parametrize('field', ['approver_ref', 'evidence_ref'])
+def test_approval_hash_shape_with_matching_expectation(role, field):
+    rec, appr = record(), approvers()
+    index = ar.ROLES.index(role)
+    rec['approvals'][index][field] = appr[role][field] = 'ZZ-not-a-hash'
+    with pytest.raises(Blocked):
+        run(rec, approvers=appr)
+    with pytest.raises(Blocked):
+        ar.validate(rec)
