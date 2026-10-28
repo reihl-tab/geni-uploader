@@ -142,6 +142,8 @@ The real Chrome regression runs against loopback HTTPS with synthetic credential
 captures the authorization redirect without following it, and makes no live OAuth call.
 Each navigation waits for the lifecycle `load` event of its own frame and loader
 (`cdp-load.mjs`), so a late load from the previous page cannot end the wait early.
+The wait is bounded (30 s by default) and rejects with a fixed, value-free
+`navigation load timeout`, always removing its timer and listener.
 
 Source: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Referrer-Policy
 
