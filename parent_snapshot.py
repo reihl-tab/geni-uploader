@@ -67,9 +67,13 @@ def parse(snapshot, expected_owner):
             statuses.append('unknown')
         nodes = family.get('nodes')
         if type(nodes) is dict:
-            for value in nodes.values():
+            for key, value in nodes.items():
                 if type(value) is dict:
                     statuses.append(merge_status(value))
+                    fields = PROFILE_FIELDS if identifier(key) else UNION_FIELDS
+                    if (not (identifier(key) or identifier(key, 'union'))
+                            or value.get('id') != key or not set(value) <= fields):
+                        statuses.append('unknown')
                 else:
                     statuses.append('unknown')
         else:
@@ -104,6 +108,8 @@ def merge_status(value):
 PROFILE_FIELDS = {'id', 'guid', 'first_name', 'middle_name', 'last_name', 'maiden_name',
                   'names', 'public', 'is_alive', 'merge_pending', 'merged_into', 'unions'}
 
+UNION_FIELDS = {'id', 'partners', 'children', 'adopted_children', 'foster_children'}
+
 
 def observed_parents(snapshot, owner):
     family = snapshot['family']
@@ -113,7 +119,7 @@ def observed_parents(snapshot, owner):
     require(type(nodes) is dict and len(nodes) <= 100
             and type(unions) is list and len(unions) <= 10)
     allowed = PROFILE_FIELDS
-    union_fields = {'id', 'partners', 'children', 'adopted_children', 'foster_children'}
+    union_fields = UNION_FIELDS
     for value in (snapshot['self'], snapshot['owner'], family['focus']):
         require(set(value) <= allowed)
     for key, value in nodes.items():
@@ -140,5 +146,5 @@ def observed_parents(snapshot, owner):
     for key, value in nodes.items():
         if identifier(key) and 'unions' in value:
             require(type(value['unions']) is list
-                    and all(uid in seen for uid in value['unions']))
+                    and all(identifier(uid, 'union') and uid in seen for uid in value['unions']))
     return len(parents)

@@ -126,3 +126,26 @@ def test_counted_parent_merge_target_is_still_blocked():
     result = parse(data, OWNER)
     assert result['observed_parent_count'] == 1
     assert result['merge_status'] == 'blocked' and result['create_enabled'] is False
+
+
+@pytest.mark.parametrize('nested', [[[1]], [{}], [None], [1], ['ZZinvalid']])
+def test_nested_union_reference_unknown_not_typeerror(nested):
+    data = copy.deepcopy(BASE)
+    data['family']['nodes'][OWNER]['unions'] = nested
+    result = parse(data, OWNER)
+    assert result['graph_status'] == 'unknown' and result['create_enabled'] is False
+
+
+@pytest.mark.parametrize('change', ['partial', 'hidden', 'redacted', 'ZZunknown',
+                                  'missing-id', 'noncanonical-key', 'mismatched-id'])
+def test_unknown_or_invalid_graph_node_never_explicit_clear(change):
+    data = copy.deepcopy(BASE)
+    value = data['family']['nodes'][OWNER]
+    if change == 'missing-id': value.pop('id')
+    elif change == 'noncanonical-key':
+        data['family']['nodes']['ZZkey'] = data['family']['nodes'].pop(OWNER)
+    elif change == 'mismatched-id': value['id'] = 'profile-99555'
+    else: value[change] = True
+    result = parse(data, OWNER)
+    assert result['merge_status'] == 'unknown' and result['graph_status'] == 'unknown'
+    assert result['create_enabled'] is False
