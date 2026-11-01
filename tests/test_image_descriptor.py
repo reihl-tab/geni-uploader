@@ -237,6 +237,9 @@ def test_publish_image_emits_descriptor_after_the_push():
     # #652: capture-first shape; a failing/empty producer fails the step.
     assert 'DESTS_OUT="$(python3 tools/image_descriptor.py --list-destinations)"' in run
     assert '[ -n "$DESTS_OUT" ]' in run
+    # Same producer-status propagation as the copies step: pin the
+    # herestring shape so the producer runs exactly once, from the capture.
+    assert 'mapfile -t DESTS <<<"$DESTS_OUT"' in run
     # Hashes come from inside the built image, offline.
     assert '--network none --entrypoint sha256sum "$TAG"' in run
     assert '--revision "$GITHUB_SHA"' in run
