@@ -127,6 +127,16 @@ test("never-settling navigate or load rejects with a fixed value-free timeout", 
   }
 });
 
+test("the maximum supported timeout is accepted and cleared without waiting", async () => {
+  const ws = fakeSocket();
+  const cdp = async () => {
+    ws.emit("Page.lifecycleEvent", { frameId: "F1", loaderId: "N", name: "load" });
+    return { frameId: "F1", loaderId: "N" };
+  };
+  await navigateAndWaitForLoad(ws, cdp, "https://127.0.0.1:1/x", { timeoutMs: 2 ** 31 - 1 });
+  assert.equal(ws.count(), 0);
+});
+
 test("a successful load clears the timer", async () => {
   const ws = fakeSocket();
   const cdp = async () => {
@@ -146,7 +156,8 @@ test("a successful load clears the timer", async () => {
 });
 
 test("invalid timeouts are refused before navigating", async () => {
-  for (const timeoutMs of [0, -1, 1.5, "50", null]) {
+  // #284: above 2^31-1 the platform timer clamps to 1 ms - refuse, do not clamp.
+  for (const timeoutMs of [0, -1, 1.5, "50", null, 2 ** 31, Number.MAX_SAFE_INTEGER]) {
     const ws = fakeSocket();
     await assert.rejects(navigateAndWaitForLoad(ws, () => assert.fail("navigated"),
       "https://127.0.0.1:1/x", { timeoutMs }), /invalid navigation timeout/);

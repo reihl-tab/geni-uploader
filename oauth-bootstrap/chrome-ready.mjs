@@ -1,6 +1,11 @@
 // Synthetic loopback test startup only. No retry/relaunch or skipped assertions.
 export async function waitForChrome({ readPort, probe, exited, sleep, now,
   diagnostics = () => "", timeoutMs = 60000 }) {
+  // #284: bounded() arms setTimeout with the remaining budget, which starts at
+  // timeoutMs; above 2^31-1 the platform clamps it to 1 ms and readiness would
+  // fail instantly instead of waiting. Supported range: 1..2^31-1.
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2 ** 31 - 1)
+    throw new Error("invalid readiness timeout");
   const start = now();
   let state = "port-file-unavailable";
   const remaining = () => Math.max(0, timeoutMs - (now() - start));
