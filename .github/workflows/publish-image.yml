@@ -71,7 +71,11 @@ jobs:
         run: |
           set -euo pipefail
           REF="$(docker inspect --format='{{index .RepoDigests 0}}' "$TAG")"
-          mapfile -t DESTS < <(python3 tools/image_descriptor.py --list-destinations)
+          # Same producer-status shape as the byte-check step (#650/#652):
+          # capture first so a failing tool fails the step, then mapfile.
+          DESTS_OUT="$(python3 tools/image_descriptor.py --list-destinations)"
+          [ -n "$DESTS_OUT" ]
+          mapfile -t DESTS <<<"$DESTS_OUT"
           docker run --rm --network none --entrypoint sha256sum "$TAG" "${DESTS[@]}" \
             > "$RUNNER_TEMP/baked.sha256"
           mkdir -p "$RUNNER_TEMP/descriptor"
