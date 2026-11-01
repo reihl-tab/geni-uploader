@@ -234,7 +234,9 @@ def test_publish_image_emits_descriptor_after_the_push():
     run = steps[emit_at]["run"]
     assert "set -euo pipefail" in run
     assert "{{index .RepoDigests 0}}" in run
-    assert "tools/image_descriptor.py --list-destinations" in run
+    # #652: capture-first shape; a failing/empty producer fails the step.
+    assert 'DESTS_OUT="$(python3 tools/image_descriptor.py --list-destinations)"' in run
+    assert '[ -n "$DESTS_OUT" ]' in run
     # Hashes come from inside the built image, offline.
     assert '--network none --entrypoint sha256sum "$TAG"' in run
     assert '--revision "$GITHUB_SHA"' in run
