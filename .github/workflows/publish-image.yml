@@ -40,9 +40,12 @@ jobs:
           set -euo pipefail
           # #517: every Dockerfile COPY destination, matching the descriptor's
           # coverage - not only /opt/geni_upload.py.
-          mapfile -t COPIES < <(python3 tools/image_descriptor.py --list-copies)
-          # #647: an empty pair list must fail, never pass the loop vacuously.
-          [ "${#COPIES[@]}" -gt 0 ]
+          # #650: capture first so a failing producer fails the step (process
+          # substitution would hide its exit status); #647: an empty pair list
+          # must fail, never pass the loop vacuously.
+          COPIES_OUT="$(python3 tools/image_descriptor.py --list-copies)"
+          [ -n "$COPIES_OUT" ]
+          mapfile -t COPIES <<<"$COPIES_OUT"
           for PAIR in "${COPIES[@]}"; do
             SRC="${PAIR% *}"
             DEST="${PAIR##* }"
