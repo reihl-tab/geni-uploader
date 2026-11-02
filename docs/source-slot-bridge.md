@@ -63,5 +63,5 @@ change it here. The gate is independent exact-head review plus the owner's
 deployment approval of that exact reviewed SHA. SOURCE_BRIDGE_WRITER remains
 uninstalled until separate owner go. Repository-secondary custody migration
 is deferred to a separate reviewed change and must not delay or be silently
-bundled into this fixed copy. Node22.23.0 and npm10.9.4 are checked exactly;
+bundled into this fixed copy. Node22.23.0 and npm10.9.8 are checked exactly;
 setup-node action and npm package lock are pinned.

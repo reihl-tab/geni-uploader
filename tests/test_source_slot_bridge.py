@@ -140,7 +140,7 @@ def test_seal_child_receives_no_credentials(monkeypatch):
 
 
 @pytest.mark.parametrize('kind', ['meta_path', 'meta_attempt', 'extra_reviewer', 'secret_length',
-                                  'cipher_length', 'after_name', 'unchanged_time', 'wait_timer'])
+                                  'cipher_length', 'cipher_overlong', 'after_name', 'unchanged_time', 'wait_timer'])
 def test_independent_negative_checks_before_or_after_one_put(kind):
     e, data = fixture(); puts = []; reads = []
     if kind == 'meta_path': data['actions/runs/99101']['path'] = 'ZZ-other'
@@ -157,7 +157,7 @@ def test_independent_negative_checks_before_or_after_one_put(kind):
                 if kind == 'after_name': value['name'] = 'ZZ-wrong'
                 if kind != 'unchanged_time': value['updated_at'] = '2026-11-02T14:01:00Z'
         return value
-    cipher = base64.b64encode(b'Z' * (56 if kind == 'cipher_length' else 57)).decode()
+    cipher = base64.b64encode(b'Z' * (56 if kind == 'cipher_length' else 58 if kind == 'cipher_overlong' else 57)).decode()
     with pytest.raises(p.source.Blocked): p.execute(e, request, lambda *_: cipher)
     assert len(puts) == (1 if kind in ('after_name', 'unchanged_time') else 0)
 
@@ -168,4 +168,4 @@ def test_node_and_package_runner_versions_pinned():
     assert setup['uses'] == 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020'
     assert setup['with']['node-version'] == '22.23.0'
     install = next(x for x in steps if x.get('name') == 'Install exact reviewed sealed-box dependency')
-    assert '10.9.4' in install['run'] and '--ignore-scripts' in install['run']
+    assert '10.9.8' in install['run'] and '--ignore-scripts' in install['run']
