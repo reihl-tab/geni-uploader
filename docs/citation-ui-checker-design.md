@@ -39,3 +39,9 @@ Tests: exact synthetic citation row detected; distinct profile-edit fields rejec
 ## Later decision
 
 After offline checker review, capture the permitted live citation form without filling or saving. Compare its actual DOM and pixels with the documented flow, verify exact profile/document and input semantics, and update a separate reviewed adapter if needed. Report a permission wall as a blocker, not a request to switch identities silently. A future writer is separate work requiring exact Value/Note approval, mutation guard, one-attempt journal and independent citation readback, plus profile-event-unchanged verification. This design does not authorize or implement it.
+
+## Implemented interface
+
+`PYTHONPATH=src python -m geni_uploader.client.citation_ui_check --observation observation.json --expected-profile 111 --expected-document 222 --output report.private.json`
+
+Output file must not already exist; it is created mode0600. Default stdout is a fixed status only. `--debug` adds only a fixed offline-analysis message. The current release intentionally has no DOM collector: an operator must supply a reviewed normalized observation after inspecting the actual form. Synthetic fixture success is not a live-site result. This is the offline first stage, not an operational browser adapter.
