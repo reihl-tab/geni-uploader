@@ -36,7 +36,13 @@ def normalized_ast_hash(source):
         if isinstance(node, ast.AST):
             return [type(node).__name__, [[key, stable(value)]
                     for key, value in ast.iter_fields(node)
-                    if not (key == "type_params" and value == [])]]
+                    # Version-added fields normalized to their pre-addition
+                    # shape: type_params (3.12) when empty, is_lazy (PEP 810,
+                    # 3.15) when 0 - both mean "construct not used", so the
+                    # canonical hash is portable. A used lazy import
+                    # (is_lazy=1) is still hashed.
+                    if not ((key == "type_params" and value == [])
+                            or (key == "is_lazy" and value == 0))]]
         if isinstance(node, list):
             return [stable(value) for value in node]
         return [type(node).__name__, repr(node)]
