@@ -57,3 +57,15 @@ preserved, original user-only workflow is byte-for-byte unchanged, and no
 runtime network or dispatch happens in tests. Independent exact-head review
 and green CI precede signed normal merge. Live execution still needs exact
 owner authority and the human deployment approval.
+
+## Environment
+
+SOURCE_EXECUTOR_SHA and SOURCE_CONFIG_SHA256 bind exact code/package.
+SOURCE_MODE is plan or run; SOURCE_CONFIRM is PLAN_SOURCES or UPLOAD_SOURCES.
+SOURCE_PLAN_RUN_ID is empty for plan and the reviewed prior plan ID for run.
+SOURCE_PACKAGE_JSON comes from PROTECTED_SOURCE_PACKAGE_JSON. SOURCE_TREE_PAT
+and GENI_ACCESS_TOKEN fill temporary read-only token mounts. SOURCE_TEMP is a
+new absolute runner directory. GITHUB_TOKEN reads only current/prior run and
+environment protection metadata. Workflow-provided GITHUB_REPOSITORY,
+GITHUB_EVENT_NAME, GITHUB_REF, GITHUB_ACTOR, GITHUB_TRIGGERING_ACTOR,
+GITHUB_RUN_ATTEMPT, GITHUB_SHA and GITHUB_RUN_ID are independently checked.
