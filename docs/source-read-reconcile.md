@@ -13,8 +13,8 @@ GENI_ACCESS_TOKEN; config is SOURCE_RECONCILE_JSON. No repository source clones.
 
 Read account identity, target identity via GUID, then the target document list
 and account uploaded-documents list. The account list is needed because a lost
-create acknowledgement can leave an untagged document. Inspect at most 10 pages
-of 50 rows per list, 20 unique candidate documents and 25 total vendor calls.
+create acknowledgement can leave an untagged document. Inspect at most 5 pages
+of 50 rows per list, 10 unique candidate documents and 25 total vendor calls.
 Requests are paced at least 10 seconds apart, with no retry. Exact same-host
 sequential pagination only, no redirects or external response URLs as requests.
 Only exact URL matches become candidate document GETs; validate numeric IDs and
@@ -38,3 +38,12 @@ References: official user/uploaded-documents documentation supports page and
 per_page with maximum 50, returning results/page/next_page. Official document
 GET supports id/title/source_url/description/tags. Unexpected shapes stay
 UNKNOWN rather than loosening the parser silently.
+
+Environment reads: RECONCILE_EXECUTOR_SHA, RECONCILE_CONFIG_SHA256,
+RECONCILE_CONFIRM, RECONCILE_CONFIG_JSON and RECONCILE_OUTPUT_DIR are scoped
+to this workflow. GITHUB_TOKEN reads only run/protection metadata, while
+GENI_ACCESS_TOKEN reads Geni. Runtime checks GITHUB_REPOSITORY,
+GITHUB_EVENT_NAME, GITHUB_REF, GITHUB_ACTOR, GITHUB_TRIGGERING_ACTOR,
+GITHUB_RUN_ATTEMPT, GITHUB_SHA and GITHUB_RUN_ID. PATH is the sole child
+environment key. A full 50-row terminal page with no continuation is ambiguous
+and stops UNKNOWN. Duplicate query keys, duplicate row IDs and page cycles stop.
