@@ -53,3 +53,15 @@ UNION_CHILD_CONFIRM must be CREATE_ONE_UNION_CHILD and UNION_CHILD_DEBUG must
 be true or1. UNION_CHILD_OUTPUT_DIR is a new absolute encrypted-evidence directory.
 UNION_CHILD_TREE_PAT is the protected private evidence-writer credential, never
 printed. GENI_SECONDARY_ACCESS_TOKEN is the protected Geni credential.
+
+## Hebrew-only names (#683)
+
+The single-child wrapper explicitly enables Hebrew-only names. Both the names
+map and top-level name fields use the supplied Hebrew values. It sends no
+English names and invents no transliteration. The API's treatment of such a
+payload is not independently verified by offline tests: extra auto-generated
+locales fail the exact read-back proof and stop after the consumed create.
+The existing household workflow keeps its bilingual-only default. The shared
+model's opt-in is explicit per call, with no mutable global policy switch.
+Gender is independent of name locale and must have owner-approved provenance.
+All one-send, proof, marker and protected approval rules stay unchanged.

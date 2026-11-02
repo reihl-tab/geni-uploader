@@ -7,18 +7,20 @@ from geni_uploader.core.people import exact, require, text
 from one_time_parent_pilot import merge_clear
 
 
-def new_payload(value):
+def new_payload(value, *, allow_hebrew_only=False):
     require(type(value) is dict)
-    exact(value, ('names', *value.get('names', {}).get('en', {}), 'is_alive', 'public',
+    base_locale = 'he' if allow_hebrew_only and set(value.get('names', {})) == {'he'} else 'en'
+    exact(value, ('names', *value.get('names', {}).get(base_locale, {}), 'is_alive', 'public',
                   'about_me', *(('gender',) if 'gender' in value else ())))
     names = value['names']
-    require(type(names) is dict and set(names) == {'en', 'he'})
+    require(type(names) is dict and (set(names) == {'en', 'he'}
+            or allow_hebrew_only and set(names) == {'he'}))
     for fields in names.values():
         require(type(fields) is dict and 'first_name' in fields
                 and set(fields) <= {'first_name', 'middle_name', 'last_name', 'maiden_name'})
         for leaf in fields.values():
             text(leaf)
-    require(all(value[k] == leaf for k, leaf in names['en'].items()))
+    require(all(value[k] == leaf for k, leaf in names[base_locale].items()))
     require(value['is_alive'] is True and value['public'] is False)
     if 'gender' in value:
         require(value['gender'] in ('male', 'female'))
@@ -28,9 +30,10 @@ def new_payload(value):
     return copy.deepcopy(value)
 
 
-def vendor_payload(value):
-    body = new_payload(value)
-    body['names'] = {'he': body['names']['he'], 'en-US': body['names']['en']}
+def vendor_payload(value, *, allow_hebrew_only=False):
+    body = new_payload(value, allow_hebrew_only=allow_hebrew_only)
+    body['names'] = {('en-US' if locale == 'en' else locale): fields
+                     for locale, fields in body['names'].items()}
     return body
 
 
@@ -61,7 +64,7 @@ def graph_spec(value):
     return copy.deepcopy(value)
 
 
-def plan(value):
+def plan(value, *, allow_hebrew_only=False):
     exact(value, ('schema', 'mode', 'owner', 'expect_name', 'anchor', 'profiles', 'family',
                   'target_union', 'external_edges', 'entries', 'expires_at', 'allow_unknown_merge',
                   'accept_hidden_duplicate_risk', 'accept_private_create_risk',
@@ -109,7 +112,7 @@ def plan(value):
         require(type(entry['key']) is str and re.fullmatch(r'[a-z][a-z0-9-]{1,48}', entry['key'])
                 and entry['key'] not in keys)
         keys.add(entry['key'])
-        body = new_payload(entry['payload'])
+        body = new_payload(entry['payload'], allow_hebrew_only=allow_hebrew_only)
         name = shared.canonical(body['names'])
         require(name not in names)
         names.add(name)
@@ -123,10 +126,10 @@ def marker(c, entry):
         'key': entry['key'], 'payload': entry['payload']})
 
 
-def profile_check(actual, expected, target, allow_unknown, *, created=False):
+def profile_check(actual, expected, target, allow_unknown, *, created=False, allow_hebrew_only=False):
     require(type(actual) is dict and actual.get('id') == target and 'error' not in actual)
     merge_clear(actual, allow_unknown)
-    for key, leaf in (vendor_payload(expected) if created else existing_payload(expected)).items():
+    for key, leaf in (vendor_payload(expected, allow_hebrew_only=allow_hebrew_only) if created else existing_payload(expected)).items():
         require(actual.get(key) == leaf)
     if created:
         require(actual.get('claimed') is False)
@@ -157,8 +160,8 @@ def union_check(actual, target, members, accept_omitted):
     return unknown
 
 
-def execute(value, io, store, save, clock):
-    c = plan(value)
+def execute(value, io, store, save, clock, *, allow_hebrew_only=False):
+    c = plan(value, allow_hebrew_only=allow_hebrew_only)
     graph = copy.deepcopy(c['family'])
     target = c['target_union']
     known = set(c['profiles'])
@@ -208,7 +211,7 @@ def execute(value, io, store, save, clock):
             now(); r['stage'] = 'consume'
             store.consume(item['marker'])
             now(); r['stage'], item['phase'] = 'send', 'UNCERTAIN'
-            actual = io.add(c['anchor'], c['mode'], vendor_payload(entry['payload']))
+            actual = io.add(c['anchor'], c['mode'], vendor_payload(entry['payload'], allow_hebrew_only=allow_hebrew_only))
             item['create_response'] = actual
             require(type(actual) is dict and 'error' not in actual)
             created = actual.get('id')
@@ -218,7 +221,7 @@ def execute(value, io, store, save, clock):
             now(); r['stage'] = 'ack'
             store.receipt(item['marker'], 'ack', save(copy.deepcopy(r)))
             profile_check(read('profile', created), entry['payload'], created,
-                          c['allow_unknown_merge'], created=True)
+                          c['allow_unknown_merge'], created=True, allow_hebrew_only=allow_hebrew_only)
             family = read('family', c['anchor'])
             if c['mode'] == 'partner':
                 require(type(family) is dict and type(family.get('nodes')) is dict
