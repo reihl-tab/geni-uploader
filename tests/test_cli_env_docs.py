@@ -32,6 +32,10 @@ ENTRY_POINTS = {
 
 # Environment variable -> designated docs that must mention it.
 ENV_DOCS = {
+    **{key: ['docs/protected-source-approval.md'] for key in (
+        'SOURCE_EXECUTOR_SHA', 'SOURCE_CONFIG_SHA256', 'SOURCE_MODE',
+        'SOURCE_CONFIRM', 'SOURCE_PACKAGE_JSON', 'SOURCE_PLAN_RUN_ID',
+        'SOURCE_TEMP', 'SOURCE_TREE_PAT')},
     **{key: ['docs/name-update-dependent-child.md'] for key in (
         'MIXED_CHILD_CONFIG_JSON', 'MIXED_CHILD_CONFIG_SHA256', 'MIXED_CHILD_CONFIRM',
         'MIXED_CHILD_DEBUG', 'MIXED_CHILD_EXECUTOR_SHA', 'MIXED_CHILD_OUTPUT_DIR',

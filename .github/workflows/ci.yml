@@ -132,6 +132,8 @@ jobs:
       - name: Run the test suite inside the image build
         # Dockerfile.test's final RUN is the suite; a red test fails the build.
         run: docker build -f Dockerfile.test .
+      - name: Protected source pinned-container offline mount smoke
+        run: python3 tools/protected_source_container_smoke.py
       - name: Build the image (not pushed)
         run: docker build --pull -t geni-uploader:ci .
       - name: Baked files are byte-identical to the repo files
