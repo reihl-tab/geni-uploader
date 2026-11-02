@@ -188,3 +188,56 @@ def test_no_evidence_sink_means_no_send():
     result = m.execute(c, io, Store(), lambda _: b'ZZ-cipher', lambda: 200)
     assert result['phase'] == 'STOPPED' and not model.posts
     assert not any(x[0] == 'POST' for x in calls)
+
+
+def hebrew_plan():
+    c = plan(); b = c['entries'][0]['payload']
+    b['names'] = {'he': {'first_name': 'שם בדוי', 'last_name': 'משפחה בדויה'}}
+    b['first_name'] = 'שם בדוי'; b['last_name'] = 'משפחה בדויה'; b['gender'] = 'female'
+    return c
+
+
+def test_hebrew_only_no_invented_english_and_exact_readback():
+    c = hebrew_plan(); r, _, model, _, _ = run(c)
+    assert r['phase'] == 'VERIFIED'
+    body = model.posts[0]
+    assert body['names'] == c['entries'][0]['payload']['names']
+    assert body['first_name'] == 'שם בדוי' and body['gender'] == 'female'
+    assert 'en' not in body['names'] and 'en-US' not in body['names']
+
+
+def test_old_household_workflow_still_rejects_hebrew_only():
+    import geni_protected_household_model as old
+    c = hebrew_plan()
+    with pytest.raises(m.shared.Blocked): old.plan(c)
+    with pytest.raises(m.shared.Blocked): old.vendor_payload(c['entries'][0]['payload'])
+    assert m.plan(c) == c
+
+
+@pytest.mark.parametrize('field', ['first_name', 'last_name'])
+def test_hebrew_top_level_must_match_name_map(field):
+    c = hebrew_plan(); c['entries'][0]['payload'][field] = 'ZZ-wrong'
+    with pytest.raises(m.shared.Blocked): m.plan(c)
+
+
+@pytest.mark.parametrize('names', [{'en': {'first_name': 'ZZ'}},
+                                  {'en-US': {'first_name': 'ZZ'}},
+                                  {'he': {'first_name': 'שם'}, 'fr': {'first_name': 'ZZ'}}, {}])
+def test_other_locale_shapes_not_admitted(names):
+    c = hebrew_plan(); c['entries'][0]['payload']['names'] = names
+    with pytest.raises(m.shared.Blocked): m.plan(c)
+
+
+def test_generated_extra_locale_not_accepted_as_exact_payload():
+    c = hebrew_plan(); expected = c['entries'][0]['payload']
+    actual = dict(m.vendor_payload(expected), id='profile-99201', claimed=False)
+    actual['names'] = dict(actual['names'], **{'en-US': {'first_name': 'ZZ-generated'}})
+    with pytest.raises(m.shared.Blocked):
+        m.profile_check(actual, expected, 'profile-99201', True, created=True)
+
+
+def test_hebrew_and_bilingual_markers_remain_original_policy():
+    import geni_protected_household_model as old
+    for c in [plan(), hebrew_plan()]:
+        entry = c['entries'][0]
+        assert old.marker(c, entry) == old.marker(m.plan(c), entry)
