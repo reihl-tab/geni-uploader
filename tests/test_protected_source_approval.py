@@ -183,15 +183,23 @@ def test_github_path_allowlist_exact(path):
 EXPECTED_GATE = """${{ github.repository == 'reihlinstinct/geni-uploader' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.sha == inputs.executor_sha && github.actor == 'reihlinstinct' && github.triggering_actor == 'reihlinstinct' && github.run_attempt == 1 && ((inputs.mode == 'plan' && inputs.confirm == 'PLAN_SOURCES' && inputs.plan_run_id == '') || (inputs.mode == 'run' && inputs.confirm == 'UPLOAD_SOURCES' && inputs.plan_run_id != '')) }}"""
 
 
+def normalize_expression(value):
+    # GitHub single-quoted strings escape a quote by doubling it. Tokenize
+    # strings intact, then discard whitespace only between those tokens.
+    tokens = re.findall(r"'(?:[^']|'')*'|[^']+", value)
+    return ''.join(token if token.startswith("'") else re.sub(r'\s+', '', token)
+                   for token in tokens)
+
+
 def check_workflow_contract(workflow):
     job = workflow['jobs']['source']
     # Exact token expression, allowing whitespace only. A redundant true OR,
     # weakened operator, changed operand or grouping cannot keep this contract.
-    assert re.sub(r'\s+', '', job['if']) == re.sub(r'\s+', '', EXPECTED_GATE)
+    assert normalize_expression(job['if']) == normalize_expression(EXPECTED_GATE)
     assert job['environment'] == 'father-create'
     artifacts = [step for candidate in workflow['jobs'].values()
                  for step in candidate['steps']
-                 if step.get('uses', '').startswith('actions/upload-artifact@')]
+                 if step.get('uses', '').lower().startswith('actions/upload-artifact@')]
     assert len(artifacts) == 1
     assert [step['with']['path'] for step in artifacts] == [
         '${{ runner.temp }}/protected-source/encrypted/*.age']
@@ -242,7 +250,7 @@ def test_workflow_gate_negative_mutations_killed(mutation):
                                      'extra_plaintext_path', 'other_job_plaintext'])
 def test_all_artifact_negative_mutations_killed(mutation):
     workflow = workflow_fixture(); steps = workflow['jobs']['source']['steps']
-    artifact = next(step for step in steps if step.get('uses', '').startswith('actions/upload-artifact@'))
+    artifact = next(step for step in steps if step.get('uses', '').lower().startswith('actions/upload-artifact@'))
     if mutation in ('second_plaintext', 'second_encrypted', 'other_job_plaintext'):
         extra = copy.deepcopy(artifact)
         if mutation != 'second_encrypted': extra['with']['path'] = '${{ runner.temp }}/protected-source/raw.log'
@@ -258,3 +266,29 @@ def test_full_history_page_blocks_even_when_length_matches():
     history['total_count'] = 100
     history['workflow_runs'] = [{'id': n, 'display_title': 'ZZ-other-plan'} for n in range(100)]
     with pytest.raises(p.Blocked): p.validate(e, data.__getitem__, lambda: 200)
+
+
+@pytest.mark.parametrize('before,after', [("'PLAN_SOURCES'", "' PLAN_SOURCES'"),
+    ("'PLAN_SOURCES'", "'PLAN_SOURCES '"), ("''", "' '"),
+    ("'refs/heads/master'", "'refs/heads/ master'"),
+    ("'reihlinstinct/geni-uploader'", "'reihlinstinct/ geni-uploader'")])
+def test_literal_whitespace_mutations_killed(before, after):
+    workflow = workflow_fixture(); gate = workflow['jobs']['source']['if']
+    assert before in gate; workflow['jobs']['source']['if'] = gate.replace(before, after, 1)
+    with pytest.raises(AssertionError): check_workflow_contract(workflow)
+
+
+def test_normalizer_preserves_escaped_quote_and_literal_spaces():
+    assert normalize_expression("  x == ' ZZ it''s  here '  ") == "x==' ZZ it''s  here '"
+    assert normalize_expression("x == 'a b'") != normalize_expression("x == 'ab'")
+    workflow = workflow_fixture(); workflow['jobs']['source']['if'] = EXPECTED_GATE.replace(' && ', '  &&  \n')
+    check_workflow_contract(workflow)
+
+
+@pytest.mark.parametrize('action', ['Actions/Upload-Artifact@ZZ', 'ACTIONS/UPLOAD-ARTIFACT@ZZ',
+                                   'actions/Upload-Artifact@ZZ'])
+def test_mixed_case_second_plaintext_artifact_killed(action):
+    workflow = workflow_fixture()
+    workflow['jobs']['source']['steps'].append({'uses': action,
+        'with': {'path': '${{ runner.temp }}/protected-source/raw.log'}})
+    with pytest.raises(AssertionError): check_workflow_contract(workflow)
