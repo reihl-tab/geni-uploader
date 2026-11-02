@@ -32,6 +32,9 @@ ENTRY_POINTS = {
 
 # Environment variable -> designated docs that must mention it.
 ENV_DOCS = {
+    **{key: ['docs/source-slot-bridge.md'] for key in (
+        'BRIDGE_EXECUTOR_SHA', 'BRIDGE_CONFIRM', 'BRIDGE_SOURCE_UPDATED_AT',
+        'BRIDGE_SOURCE_VALUE', 'BRIDGE_WRITER', 'PATH')},
     **{key: ['docs/protected-source-approval.md'] for key in (
         'SOURCE_EXECUTOR_SHA', 'SOURCE_CONFIG_SHA256', 'SOURCE_MODE',
         'SOURCE_CONFIRM', 'SOURCE_PACKAGE_JSON', 'SOURCE_PLAN_RUN_ID',
