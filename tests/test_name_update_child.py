@@ -208,3 +208,47 @@ def test_workflow_new_secret_and_exact_protected_gate():
                  'group: one-time-parent-pilot', 'cancel-in-progress: false',
                  'persist-credentials: false', 'if: always()', 'retention-days: 1']:
         assert text in s
+
+
+@pytest.mark.parametrize('index', range(10))
+def test_exact_update_transport_order_rejects_each_wrong_next_request(index):
+    c = plan(); v = p.ScopedVendor(TOKEN, c)
+    for method, route in v.update_sequence[:index]:
+        v.admit_vendor(method, route)
+    # Every candidate is a legitimate request in this workflow, but not the next
+    # one. Keeping the route and budget valid isolates the exact ORDER gate.
+    expected = v.update_sequence[index]
+    wrong = next(item for item in v.update_sequence if item != expected)
+    before = (v.update_index, v.calls, v.update_pending)
+    with pytest.raises(m.child.shared.Blocked):
+        v.admit_vendor(*wrong)
+    assert (v.update_index, v.calls, v.update_pending) == before
+    assert not v.update_verified
+
+
+@pytest.mark.parametrize('expired_read', [0, 1, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+def test_model_expiry_independent_of_transport_clock(expired_read):
+    c, v, model, calls, _, io = wired(); ticks = []
+    def clock():
+        ticks.append(None)
+        return c['expires_at'] if len(ticks) > expired_read else 200
+    r = m.execute(c, io, Store(), lambda _: b'ZZ-cipher', clock)
+    assert r['phase'] == 'STOPPED' and not model.posts and not v.update_verified
+    # Transport still sees a non-expired clock, so it cannot mask this gate.
+    assert p.time.time() < c['expires_at']
+    assert sum(method == 'POST' for method, _, _ in calls) == (expired_read >= 8)
+
+
+@pytest.mark.parametrize('field,value', [('id', 'profile-99899'), ('first_name', 'IncorrectIdentity')])
+def test_mixed_owner_identity_rejected_before_any_update(field, value):
+    c, v, model, calls, _, io = wired(); original = io.get_profile
+    def get_profile(target):
+        actual = original(target)
+        if target == 'profile':
+            actual = copy.deepcopy(actual); actual[field] = value
+        return actual
+    io.get_profile = get_profile
+    r = m.execute(c, io, Store(), lambda _: b'ZZ-cipher', lambda: 200)
+    assert r['phase'] == 'STOPPED' and r['update_phase'] == 'NOT_SENT'
+    assert len(calls) == 1 and calls[0][0] == 'GET'
+    assert not model.posts and not v.update_pending and not v.update_verified

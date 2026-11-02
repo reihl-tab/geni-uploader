@@ -59,7 +59,7 @@ names only. Live compatibility is not proved by offline fixtures.
 
 MIXED_CHILD_CONFIG_JSON and MIXED_CHILD_CONFIG_SHA256 bind exact package bytes.
 MIXED_CHILD_EXECUTOR_SHA must match GITHUB_SHA. MIXED_CHILD_CONFIRM is
-UPDATE_NAME_THEN_CREATE_CHILD; MIXED_CHILD_DEBUG must be true or1.
+UPDATE_NAME_THEN_CREATE_CHILD; MIXED_CHILD_DEBUG must be true or 1.
 MIXED_CHILD_OUTPUT_DIR is a new absolute encrypted-evidence directory.
 MIXED_CHILD_TREE_PAT is the private evidence writer credential. Existing token
 GENI_SECONDARY_ACCESS_TOKEN is never logged. Workflow name-update-child-create.yml
