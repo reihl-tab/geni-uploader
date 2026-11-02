@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -179,27 +180,77 @@ def test_github_path_allowlist_exact(path):
     with pytest.raises(p.Blocked): p.github_get('ZZ-token', path)
 
 
-def test_parsed_workflow_all_dispatch_clauses_and_secret_scope():
-    import yaml
-    root = Path(__file__).resolve().parents[1]
-    workflow = yaml.safe_load((root / p.WORKFLOW).read_text())
-    job = workflow['jobs']['source']; gate = job['if']
-    clauses = ["github.repository == 'reihlinstinct/geni-uploader'",
-               "github.event_name == 'workflow_dispatch'", "github.ref == 'refs/heads/master'",
-               'github.sha == inputs.executor_sha', "github.actor == 'reihlinstinct'",
-               "github.triggering_actor == 'reihlinstinct'", 'github.run_attempt == 1',
-               "inputs.mode == 'plan'", "inputs.confirm == 'PLAN_SOURCES'", "inputs.plan_run_id == ''",
-               "inputs.mode == 'run'", "inputs.confirm == 'UPLOAD_SOURCES'", "inputs.plan_run_id != ''"]
-    for clause in clauses: assert clause in gate
+EXPECTED_GATE = """${{ github.repository == 'reihlinstinct/geni-uploader' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.sha == inputs.executor_sha && github.actor == 'reihlinstinct' && github.triggering_actor == 'reihlinstinct' && github.run_attempt == 1 && ((inputs.mode == 'plan' && inputs.confirm == 'PLAN_SOURCES' && inputs.plan_run_id == '') || (inputs.mode == 'run' && inputs.confirm == 'UPLOAD_SOURCES' && inputs.plan_run_id != '')) }}"""
+
+
+def check_workflow_contract(workflow):
+    job = workflow['jobs']['source']
+    # Exact token expression, allowing whitespace only. A redundant true OR,
+    # weakened operator, changed operand or grouping cannot keep this contract.
+    assert re.sub(r'\s+', '', job['if']) == re.sub(r'\s+', '', EXPECTED_GATE)
     assert job['environment'] == 'father-create'
-    artifact = next(x for x in job['steps'] if x.get('uses', '').startswith('actions/upload-artifact@'))
-    assert artifact['with']['path'] == '${{ runner.temp }}/protected-source/encrypted/*.age'
+    artifacts = [step for candidate in workflow['jobs'].values()
+                 for step in candidate['steps']
+                 if step.get('uses', '').startswith('actions/upload-artifact@')]
+    assert len(artifacts) == 1
+    assert [step['with']['path'] for step in artifacts] == [
+        '${{ runner.temp }}/protected-source/encrypted/*.age']
     for name, value in workflow['jobs'].items():
         if 'secrets.' in json.dumps(value): assert name == 'source' and value['environment'] == 'father-create'
     step = next(x for x in job['steps'] if 'SOURCE_PACKAGE_JSON' in x.get('env', {}))
     assert step['env']['SOURCE_PACKAGE_JSON'] == '${{ secrets.PROTECTED_SOURCE_PACKAGE_JSON }}'
     assert step['env']['SOURCE_TREE_PAT'] == '${{ secrets.FAMILY_TREE_PAT }}'
     assert step['env']['GENI_ACCESS_TOKEN'] == '${{ secrets.GENI_ACCESS_TOKEN }}'
+
+
+def workflow_fixture():
+    import yaml
+    return yaml.safe_load((Path(__file__).resolve().parents[1] / p.WORKFLOW).read_text())
+
+
+def test_parsed_workflow_exact_dispatch_expression_and_all_artifacts():
+    check_workflow_contract(workflow_fixture())
+
+
+@pytest.mark.parametrize('mutation', ['true_or', 'and_to_or', 'or_to_and', 'ungroup',
+    'repository', 'event', 'ref', 'executor', 'actor', 'triggering_actor', 'attempt',
+    'plan_mode', 'plan_confirm', 'empty_plan_id', 'run_mode', 'run_confirm', 'required_plan_id'])
+def test_workflow_gate_negative_mutations_killed(mutation):
+    workflow = workflow_fixture(); gate = workflow['jobs']['source']['if']
+    replacements = {
+        'true_or': ('${{', '${{ true ||'), 'and_to_or': (' && ', ' || '),
+        'or_to_and': (' || ', ' && '), 'ungroup': ("&& ((inputs.mode", "&& (inputs.mode"),
+        'repository': ("github.repository == 'reihlinstinct/geni-uploader'", 'true'),
+        'event': ("github.event_name == 'workflow_dispatch'", 'true'),
+        'ref': ("github.ref == 'refs/heads/master'", 'true'),
+        'executor': ('github.sha == inputs.executor_sha', 'true'),
+        'actor': ("github.actor == 'reihlinstinct'", 'true'),
+        'triggering_actor': ("github.triggering_actor == 'reihlinstinct'", 'true'),
+        'attempt': ('github.run_attempt == 1', 'true'),
+        'plan_mode': ("inputs.mode == 'plan'", 'true'),
+        'plan_confirm': ("inputs.confirm == 'PLAN_SOURCES'", 'true'),
+        'empty_plan_id': ("inputs.plan_run_id == ''", 'true'),
+        'run_mode': ("inputs.mode == 'run'", 'true'),
+        'run_confirm': ("inputs.confirm == 'UPLOAD_SOURCES'", 'true'),
+        'required_plan_id': ("inputs.plan_run_id != ''", 'true')}
+    before, after = replacements[mutation]; assert before in gate
+    workflow['jobs']['source']['if'] = gate.replace(before, after, 1)
+    with pytest.raises(AssertionError): check_workflow_contract(workflow)
+
+
+@pytest.mark.parametrize('mutation', ['second_plaintext', 'second_encrypted', 'plaintext_path',
+                                     'extra_plaintext_path', 'other_job_plaintext'])
+def test_all_artifact_negative_mutations_killed(mutation):
+    workflow = workflow_fixture(); steps = workflow['jobs']['source']['steps']
+    artifact = next(step for step in steps if step.get('uses', '').startswith('actions/upload-artifact@'))
+    if mutation in ('second_plaintext', 'second_encrypted', 'other_job_plaintext'):
+        extra = copy.deepcopy(artifact)
+        if mutation != 'second_encrypted': extra['with']['path'] = '${{ runner.temp }}/protected-source/raw.log'
+        if mutation == 'other_job_plaintext': workflow['jobs']['ZZ-other'] = {'steps': [extra]}
+        else: steps.append(extra)
+    elif mutation == 'plaintext_path': artifact['with']['path'] = '${{ runner.temp }}/protected-source/raw.log'
+    else: artifact['with']['path'] += '\n${{ runner.temp }}/protected-source/raw.log'
+    with pytest.raises(AssertionError): check_workflow_contract(workflow)
 
 
 def test_full_history_page_blocks_even_when_length_matches():
