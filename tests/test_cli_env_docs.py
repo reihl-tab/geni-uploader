@@ -17,6 +17,7 @@ ALLOWLIST = ROOT / '.github' / 'docs-vs-code-allowlist.txt'
 
 # Entry point script -> designated docs that must document its CLI surface.
 ENTRY_POINTS = {
+    'src/geni_uploader/client/citation_ui_check.py': ['docs/citation-ui-checker-design.md'],
     'geni_upload.py': ['docs/usage.md', 'docs/geni-token.md',
                        'docs/API-CLIENT-DESIGN.md', 'docs/guid-resolution.md',
                        'README.md'],
@@ -141,6 +142,7 @@ ENV_TOKEN = re.compile(
 # Command spans are scanned only after one of these markers; the marker
 # selects the entry point whose surface is valid there.
 MARKERS = {
+    'src/geni_uploader/client/citation_ui_check.py': 'src/geni_uploader/client/citation_ui_check.py',
     'geni_upload.py': 'geni_upload.py',
     'ghcr.io/reihlinstinct/geni-uploader@': 'geni_upload.py',
     'source_details.py': 'source_details.py',
