@@ -160,7 +160,8 @@ def union_check(actual, target, members, accept_omitted):
     return unknown
 
 
-def execute(value, io, store, save, clock, *, allow_hebrew_only=False):
+def execute(value, io, store, save, clock, *, allow_hebrew_only=False,
+            accept_first_child_omission=False):
     c = plan(value, allow_hebrew_only=allow_hebrew_only)
     graph = copy.deepcopy(c['family'])
     target = c['target_union']
@@ -181,7 +182,13 @@ def execute(value, io, store, save, clock, *, allow_hebrew_only=False):
         return actual
 
     def union_read(union):
-        missing = union_check(read('union', union), union, graph[union], c['accept_omitted_union_fields'])
+        actual = read('union', union)
+        first_child = (accept_first_child_omission and c['mode'] == 'child'
+                       and union == target and not any(role == 'child' for role in graph[union].values()))
+        if first_child:
+            require('partners' in actual)  # only children omission may be accepted
+        missing = union_check(actual, union, graph[union],
+                              c['accept_omitted_union_fields'] or first_child)
         if missing:
             r['unknown_union_fields'].append({'union': union, 'fields': missing,
                                               'state': 'UNKNOWN_OMITTED'})
