@@ -51,7 +51,6 @@ def _stable_canonical(node):
     return [type(node).__name__, repr(node)]
 
 
-
 def test_is_lazy_one_changes_the_canonical_shape_on_every_python():
     # #658: hard mutation protection on the gating legs (the lazy-syntax
     # test below only runs on the informational py315 leg). iter_fields
