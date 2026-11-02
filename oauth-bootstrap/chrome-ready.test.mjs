@@ -9,6 +9,25 @@ function fixture() {
     sleep: async (ms) => { clock += ms; }, now: () => clock, timeoutMs: 60000 };
 }
 
+test("invalid timeouts are refused before any probing", async () => {
+  for (const timeoutMs of [0, -1, 1.5, NaN, 2 ** 31, Number.MAX_SAFE_INTEGER]) {
+    const f = fixture();
+    let probed = false;
+    f.readPort = async () => { probed = true; return "9911\nZZpath"; };
+    f.timeoutMs = timeoutMs;
+    await assert.rejects(waitForChrome(f),
+      (e) => e.message === "invalid readiness timeout");
+    assert.equal(probed, false);
+  }
+});
+
+test("the maximum supported timeout is accepted and resolves without waiting", async () => {
+  const f = fixture();
+  f.timeoutMs = 2 ** 31 - 1;
+  const { port } = await waitForChrome(f);
+  assert.equal(port, "9911");
+});
+
 test("waits past former30second deadline and validates actual page readiness", async () => {
   const f = fixture();
   const original = f.readPort;

@@ -5,7 +5,10 @@
 // Bounded (#273): the whole navigate-and-load wait rejects with a fixed, value-free
 // error after timeoutMs, and the timer and listener are always cleaned up.
 export async function navigateAndWaitForLoad(ws, cdp, url, { timeoutMs = 30000 } = {}) {
-  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new Error("invalid navigation timeout");
+  // #284: setTimeout clamps delays above 2^31-1 to 1 ms, so a larger bound
+  // would time out instantly instead of waiting. Supported range: 1..2^31-1.
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2 ** 31 - 1)
+    throw new Error("invalid navigation timeout");
   const seen = new Set();
   let wanted = null;
   let resolveLoad;
