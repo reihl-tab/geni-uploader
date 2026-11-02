@@ -47,3 +47,10 @@ GITHUB_EVENT_NAME, GITHUB_REF, GITHUB_ACTOR, GITHUB_TRIGGERING_ACTOR,
 GITHUB_RUN_ATTEMPT, GITHUB_SHA and GITHUB_RUN_ID. PATH is the sole child
 environment key. A full 50-row terminal page with no continuation is ambiguous
 and stops UNKNOWN. Duplicate query keys, duplicate row IDs and page cycles stop.
+
+## Empty initial collection compatibility (#699)
+
+Design: accept exactly {"results": []} on page 1 as a terminal empty collection.
+No other keys, later page, nonempty rows, links, error or metadata are admitted
+by this compatibility branch. The normal documented page checks stay unchanged.
+This only advances read-only inspection; it grants no recreation or journal reset.
