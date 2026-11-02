@@ -241,3 +241,104 @@ def test_hebrew_and_bilingual_markers_remain_original_policy():
     for c in [plan(), hebrew_plan()]:
         entry = c['entries'][0]
         assert old.marker(c, entry) == old.marker(m.plan(c), entry)
+
+
+def first_child_plan():
+    c = plan(); c['family'][UNION].pop(OWNER)
+    c['accept_first_child_omission'] = True
+    return c
+
+
+def first_child_run(c=None, after_omitted=False, partners_omitted=False):
+    c = c or first_child_plan(); saved = []
+    _v, model, _, io = wired(c, evidence=saved.append)
+    original = model.get_union
+    def union(node):
+        actual = original(node)
+        if not model.posts or after_omitted: actual.pop('children')
+        if partners_omitted: actual.pop('partners')
+        return actual
+    model.get_union = union
+    result = m.execute(c, io, Store(), lambda _: b'ZZ-cipher', lambda: 200)
+    return result, model
+
+
+def test_first_child_omission_before_only_explicit_after():
+    r, io = first_child_run()
+    assert r['phase'] == 'VERIFIED' and len(io.posts) == 1
+    assert r['unknown_union_fields'] and all(x['fields'] == ['children'] for x in r['unknown_union_fields'])
+    assert r['responses'][-1]['value']['children'] == ['profile-99201']
+
+
+def test_first_child_after_omitted_stops_with_consumed_create():
+    r, io = first_child_run(after_omitted=True)
+    assert r['phase'] == 'STOPPED' and len(io.posts) == 1
+
+
+def test_first_child_partners_must_be_explicit_before():
+    r, io = first_child_run(partners_omitted=True)
+    assert r['phase'] == 'STOPPED' and not io.posts
+
+
+@pytest.mark.parametrize('flag', [False, None, 1, 'true'])
+def test_first_child_risk_not_implicit_or_truthy(flag):
+    c = first_child_plan(); c['accept_first_child_omission'] = flag
+    if flag is False:
+        r, io = first_child_run(c)
+        assert r['phase'] == 'STOPPED' and not io.posts
+    else:
+        with pytest.raises(m.shared.Blocked): m.plan(c)
+
+
+def test_first_child_default_off():
+    c = first_child_plan(); del c['accept_first_child_omission']
+    r, io = first_child_run(c)
+    assert r['phase'] == 'STOPPED' and not io.posts
+
+
+def test_first_child_flag_rejected_when_existing_child_visible():
+    c = plan(); c['accept_first_child_omission'] = True
+    with pytest.raises(m.shared.Blocked): m.plan(c)
+
+
+def test_old_workflow_rejects_new_flag():
+    import geni_protected_household_model as old
+    with pytest.raises(m.shared.Blocked): old.plan(first_child_plan())
+
+
+def test_first_child_exception_never_applies_to_another_union():
+    c = first_child_plan()
+    c['family']['union-99888'] = {OWNER: 'partner'}
+    v, model, _, io = wired(c, evidence=lambda _: None)
+    original = model.get_union
+    def union(node):
+        actual = original(node)
+        if not model.posts: actual.pop('children')
+        return actual
+    model.get_union = union
+    r = m.execute(c, io, Store(), lambda _: b'ZZ-cipher', lambda: 200)
+    assert r['phase'] == 'STOPPED' and not model.posts and v.post_count == 0
+
+
+def test_shared_model_no_exception_when_child_already_in_graph():
+    import geni_protected_household_model as old
+    c = plan(); model = ModelIO(c, 'omitted')
+    r = old.execute(c, model, Store(), lambda _: b'ZZ-cipher', lambda: 200,
+                    accept_first_child_omission=True)
+    assert r['phase'] == 'STOPPED' and not model.posts
+
+
+def test_model_level_post_creation_omission_stops_without_transport_layer():
+    import geni_protected_household_model as old
+    c = first_child_plan(); c.pop('accept_first_child_omission')
+    model = ModelIO(c); original = model.get_union
+    def union(node):
+        actual = original(node)
+        actual.pop('children')  # both before and after the one create
+        return actual
+    model.get_union = union
+    r = old.execute(c, model, Store(), lambda _: b'ZZ-cipher', lambda: 200,
+                    accept_first_child_omission=True)
+    assert r['phase'] == 'STOPPED' and len(model.posts) == 1
+    assert r['items'][0]['phase'] == 'ACKNOWLEDGED_NOT_VERIFIED'
+    assert r['stage'] == 'read_union'

@@ -65,3 +65,19 @@ The existing household workflow keeps its bilingual-only default. The shared
 model's opt-in is explicit per call, with no mutable global policy switch.
 Gender is independent of name locale and must have owner-approved provenance.
 All one-send, proof, marker and protected approval rules stay unchanged.
+
+## First-child baseline omission policy (#685)
+
+Optional plan field accept_first_child_omission defaults false and is admitted
+only by the single-child wrapper. True is valid only when the exact target union
+graph contains exactly two partners and no visible children. Before creation,
+partners must still be explicit and exact; only children may be omitted. That
+omission is retained as UNKNOWN_OMITTED, never interpreted as absence proof.
+The owner must explicitly approve hidden-child risk in the exact package.
+
+Once the new child is part of the expected graph, the exception no longer
+applies. Direct union children including the new child must be explicit, as must
+both parents, and all existing profile/anchor/reciprocal proofs still apply.
+Missing children after a consumed creation means STOP, not success or retry.
+Old household plans reject the new field. No marker, send count, route, expiry,
+source/config hash or protected approval requirement changes.

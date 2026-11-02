@@ -8,16 +8,28 @@ union_check = shared_model.union_check
 
 
 def plan(value):
-    c = shared_model.plan(value, allow_hebrew_only=True)
+    require(type(value) is dict)
+    flag = value.get('accept_first_child_omission', False)
+    require(type(flag) is bool)
+    base = {key: leaf for key, leaf in value.items() if key != 'accept_first_child_omission'}
+    c = shared_model.plan(base, allow_hebrew_only=True)
     require(c['mode'] == 'child' and len(c['entries']) == 1
             and c['accept_omitted_union_fields'] is False)
+    if flag:
+        members = c['family'][c['target_union']]
+        require(len(members) == 2 and set(members.values()) == {'partner'})
+    if 'accept_first_child_omission' in value:
+        c['accept_first_child_omission'] = flag
     return c
 
 
 def execute(value, io, store, save, clock):
     # Shared marker deliberately unchanged: expiry, union or executor changes do
     # not reopen a consumed named operation from another household workflow.
-    return shared_model.execute(plan(value), io, store, save, clock, allow_hebrew_only=True)
+    c = plan(value)
+    flag = c.pop('accept_first_child_omission', False)
+    return shared_model.execute(c, io, store, save, clock, allow_hebrew_only=True,
+                                accept_first_child_omission=flag)
 
 
 def vendor_payload(value):
