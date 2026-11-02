@@ -81,3 +81,21 @@ both parents, and all existing profile/anchor/reciprocal proofs still apply.
 Missing children after a consumed creation means STOP, not success or retry.
 Old household plans reject the new field. No marker, send count, route, expiry,
 source/config hash or protected approval requirement changes.
+
+## Explicit two-child package (#687)
+
+Optional plan field allow_two_children defaults false. True admits exactly two
+entries in the same target union. This is a reviewed bounded extension, not a
+request to split an approved family across separate runs. The existing workflow
+name and confirmation string remain compatibility labels; the immutable plan
+and config hash define whether this job sends one or two entries.
+
+Each entry has its own unchanged consumed marker, ACK and final receipt. Exact
+profile, anchor, reciprocal and explicit union proof must finish before another
+POST is admitted. After any uncertain effect or proof/storage failure, remaining
+entries are not sent. No retry, marker reset or automatic repair. Re-run does not
+resume a partly completed package: a fresh separately approved remaining-entry
+plan would be needed. First-child omission applies only before any child exists
+in the expected target graph, never after the first create or before the second.
+Both entries must have independently grounded owner-approved payloads, and the
+owner approves the joint effect, expiry and hidden-child risk before dispatch.

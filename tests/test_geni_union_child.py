@@ -342,3 +342,53 @@ def test_model_level_post_creation_omission_stops_without_transport_layer():
     assert r['phase'] == 'STOPPED' and len(model.posts) == 1
     assert r['items'][0]['phase'] == 'ACKNOWLEDGED_NOT_VERIFIED'
     assert r['stage'] == 'read_union'
+
+
+def two_plan():
+    c = old_plan(); c['accept_omitted_union_fields'] = False
+    c['allow_two_children'] = True
+    return c
+
+
+def test_explicit_two_children_each_verified_before_second():
+    c = two_plan(); r, v, model, calls, _ = run(c)
+    assert r['phase'] == 'VERIFIED' and len(model.posts) == 2 and not v.pending
+    posts = [i for i, x in enumerate(calls) if x[0] == 'POST']
+    between = calls[posts[0] + 1:posts[1]]
+    assert any('/profile-99201/immediate-family?' in route for _, route, _ in between)
+    assert sum('/union-' in route for _, route, _ in between) == 2
+    assert len(r['items']) == 2 and all(x['phase'] == 'VERIFIED' for x in r['items'])
+
+
+@pytest.mark.parametrize('anomaly', ['privacy', 'description', 'claimed', 'extra_edge',
+                                   'wrong_union', 'lost_response'])
+def test_two_children_uncertainty_never_sends_second(anomaly):
+    r, v, model, _, _ = run(two_plan(), anomaly=anomaly)
+    assert r['phase'] == 'STOPPED' and len(model.posts) == 1 and v.pending
+
+
+def test_two_flag_exact_scope_not_general_unbounded_mode():
+    for count in [1, 3]:
+        c = two_plan(); c['entries'] = (c['entries'] * 2)[:count]
+        with pytest.raises(m.shared.Blocked): m.plan(c)
+    c = two_plan(); c['allow_two_children'] = 'true'
+    with pytest.raises(m.shared.Blocked): m.plan(c)
+    c = two_plan(); del c['allow_two_children']
+    with pytest.raises(m.shared.Blocked): m.plan(c)
+
+
+def test_two_children_first_child_omission_still_only_before_any_child():
+    c = first_child_plan(); c['entries'] = old_plan()['entries']; c['allow_two_children'] = True
+    r, model = first_child_run(c)
+    assert r['phase'] == 'VERIFIED' and len(model.posts) == 2
+    r, model = first_child_run(c, after_omitted=True)
+    assert r['phase'] == 'STOPPED' and len(model.posts) == 1
+
+
+def test_two_markers_and_receipts_replay_cannot_recreate_first():
+    c = two_plan(); st = Store(); run(c, store=st)
+    c['expires_at'] += 50
+    r, _, model, _, _ = run(c, store=st)
+    assert r['phase'] == 'STOPPED' and not model.posts
+    import geni_protected_household_model as old
+    assert old.marker(c, c['entries'][0]) != old.marker(c, c['entries'][1])

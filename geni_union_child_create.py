@@ -48,7 +48,7 @@ class ScopedVendor(HTTPS):
             require(route in allowed)
         else:
             require(method == 'POST' and route == '/api/' + c['target_union'] + '/add-child')
-            require(not self.pending and self.post_count < 1)
+            require(not self.pending and self.post_count < len(c['entries']))
             self.pending = True
             self.post_count += 1
         self.calls += 1  # consume admission before possible timeout/wait/transport

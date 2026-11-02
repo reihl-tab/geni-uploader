@@ -11,15 +11,20 @@ def plan(value):
     require(type(value) is dict)
     flag = value.get('accept_first_child_omission', False)
     require(type(flag) is bool)
-    base = {key: leaf for key, leaf in value.items() if key != 'accept_first_child_omission'}
+    two = value.get('allow_two_children', False)
+    require(type(two) is bool)
+    base = {key: leaf for key, leaf in value.items()
+            if key not in ('accept_first_child_omission', 'allow_two_children')}
     c = shared_model.plan(base, allow_hebrew_only=True)
-    require(c['mode'] == 'child' and len(c['entries']) == 1
+    require(c['mode'] == 'child' and len(c['entries']) == (2 if two else 1)
             and c['accept_omitted_union_fields'] is False)
     if flag:
         members = c['family'][c['target_union']]
         require(len(members) == 2 and set(members.values()) == {'partner'})
     if 'accept_first_child_omission' in value:
         c['accept_first_child_omission'] = flag
+    if 'allow_two_children' in value:
+        c['allow_two_children'] = two
     return c
 
 
@@ -28,6 +33,7 @@ def execute(value, io, store, save, clock):
     # not reopen a consumed named operation from another household workflow.
     c = plan(value)
     flag = c.pop('accept_first_child_omission', False)
+    c.pop('allow_two_children', None)
     return shared_model.execute(c, io, store, save, clock, allow_hebrew_only=True,
                                 accept_first_child_omission=flag)
 
