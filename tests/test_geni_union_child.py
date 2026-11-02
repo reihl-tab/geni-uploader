@@ -304,3 +304,41 @@ def test_first_child_flag_rejected_when_existing_child_visible():
 def test_old_workflow_rejects_new_flag():
     import geni_protected_household_model as old
     with pytest.raises(m.shared.Blocked): old.plan(first_child_plan())
+
+
+def test_first_child_exception_never_applies_to_another_union():
+    c = first_child_plan()
+    c['family']['union-99888'] = {OWNER: 'partner'}
+    v, model, _, io = wired(c, evidence=lambda _: None)
+    original = model.get_union
+    def union(node):
+        actual = original(node)
+        if not model.posts: actual.pop('children')
+        return actual
+    model.get_union = union
+    r = m.execute(c, io, Store(), lambda _: b'ZZ-cipher', lambda: 200)
+    assert r['phase'] == 'STOPPED' and not model.posts and v.post_count == 0
+
+
+def test_shared_model_no_exception_when_child_already_in_graph():
+    import geni_protected_household_model as old
+    c = plan(); model = ModelIO(c, 'omitted')
+    r = old.execute(c, model, Store(), lambda _: b'ZZ-cipher', lambda: 200,
+                    accept_first_child_omission=True)
+    assert r['phase'] == 'STOPPED' and not model.posts
+
+
+def test_model_level_post_creation_omission_stops_without_transport_layer():
+    import geni_protected_household_model as old
+    c = first_child_plan(); c.pop('accept_first_child_omission')
+    model = ModelIO(c); original = model.get_union
+    def union(node):
+        actual = original(node)
+        actual.pop('children')  # both before and after the one create
+        return actual
+    model.get_union = union
+    r = old.execute(c, model, Store(), lambda _: b'ZZ-cipher', lambda: 200,
+                    accept_first_child_omission=True)
+    assert r['phase'] == 'STOPPED' and len(model.posts) == 1
+    assert r['items'][0]['phase'] == 'ACKNOWLEDGED_NOT_VERIFIED'
+    assert r['stage'] == 'read_union'
