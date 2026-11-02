@@ -284,3 +284,28 @@ def test_success_and_expiry_failure_evidence(tmp_path):
     with pytest.raises(p.gate.Blocked): p.execute(env, meta.__getitem__, clock=lambda: next(times),
         factory=lambda *_: Fake(replies), seal=lambda _r, v, _p: saved.append(copy.deepcopy(v)))
     assert saved[-1]['phase'] == 'UNKNOWN'
+
+
+def test_exact_metadata_free_empty_first_page_live_shape():
+    c, _, _, replies = fixture()
+    replies['/api/profile-992/documents?page=1&per_page=50'] = {'results': []}
+    result = p.reconcile(c, Fake(replies), report())
+    assert result['target_listing_complete'] is True
+    assert result['sources'][0]['state'] == 'EXACT_UNTAGGED'
+    assert result['sources'][0]['recreate_allowed'] is False
+
+
+@pytest.mark.parametrize('extra', ['next', 'next_page', 'prev_page', 'error', 'page', 'ZZ'])
+def test_empty_missing_page_with_any_extra_key_remains_unknown(extra):
+    prefix = '/api/user/uploaded-documents'
+    value = {'results': [], extra: None}
+    with pytest.raises(p.gate.Blocked):
+        p.listing(Fake({prefix + '?page=1&per_page=50': value}), prefix, lambda *_: None)
+
+
+def test_missing_page_on_later_empty_page_remains_unknown():
+    prefix = '/api/user/uploaded-documents'
+    values = {prefix + '?page=1&per_page=50': {'page': 1, 'results': [
+        {'id': 'document-991', 'source_url': 'https://zz.invalid', 'title': 'ZZ'}], 'next_page': '?page=2'},
+        prefix + '?page=2&per_page=50': {'results': []}}
+    with pytest.raises(p.gate.Blocked): p.listing(Fake(values), prefix, lambda *_: None)
