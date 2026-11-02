@@ -50,6 +50,15 @@ def normalized_ast_hash(source):
 
 
 
+def test_lazy_import_changes_the_normalized_hash():
+    # #656: an "always drop is_lazy" mutation must be caught. Parsing the
+    # lazy keyword needs 3.15+; on older interpreters the field is absent
+    # and the normalization is a no-op by construction.
+    if "is_lazy" not in ast.Import._fields:
+        pytest.skip("lazy import syntax requires Python 3.15+")
+    assert normalized_ast_hash("lazy import os") != normalized_ast_hash("import os")
+
+
 @pytest.mark.parametrize('legacy', MOVES)
 def test_evidence_identity_and_implementation(legacy, monkeypatch):
     target, before = MOVES[legacy]
