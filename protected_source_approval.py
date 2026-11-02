@@ -45,8 +45,8 @@ def configuration(raw, digest):
     return c
 
 
-def title(mode, digest, executor):
-    return 'protected-sources:' + mode + ':' + digest + ':' + executor
+def title(mode, digest, executor, prior_id=''):
+    return 'protected-sources:' + mode + ':' + digest + ':' + executor + ':' + prior_id
 
 
 def validate(env, get, clock):
@@ -69,7 +69,7 @@ def validate(env, get, clock):
             and current['run_attempt'] == 1 and current['actor']['login'] == 'reihlinstinct'
             and current['triggering_actor']['login'] == 'reihlinstinct'
             and current['path'] == WORKFLOW and current['head_branch'] == 'master'
-            and current['display_title'] == title(mode, digest, executor))
+            and current['display_title'] == title(mode, digest, executor, env.get('SOURCE_PLAN_RUN_ID', '')))
     protection = get('environments/father-create')
     require(protection['can_admins_bypass'] is False
             and protection['deployment_branch_policy'] == {'protected_branches': False, 'custom_branch_policies': True})
@@ -94,11 +94,23 @@ def validate(env, get, clock):
                 and prior['display_title'] == title('plan', digest, executor))
         at = datetime.datetime.fromisoformat(prior['updated_at']).timestamp()
         require(0 <= clock() - at <= 86400)
+        # The shared non-cancelling source concurrency serializes this check
+        # before any container access. Even a failed/rejected upload consumes
+        # its plan; no ambiguous replay or later retry is admitted.
+        history = get('actions/workflows/protected-source-approval.yml/runs?event=workflow_dispatch&per_page=100&created=%3E%3D' + prior['created_at'])
+        require(type(history['total_count']) is int and history['total_count'] < 100
+                and len(history['workflow_runs']) == history['total_count'])
+        for previous in history['workflow_runs']:
+            require(str(previous['id']) == run_id
+                    or previous['display_title'] != title('run', digest, executor, prior_id))
     return c, mode
 
 
 def github_get(token, path):
-    require(path.startswith(('actions/runs/', 'environments/father-create')))
+    require(re.fullmatch(r'actions/runs/[1-9][0-9]{0,19}', path)
+            or path in ('environments/father-create',
+                        'environments/father-create/deployment-branch-policies')
+            or re.fullmatch(r'actions/workflows/protected-source-approval\.yml/runs\?event=workflow_dispatch&per_page=100&created=%3E%3D[0-9TZ:.-]+', path))
     request = urllib.request.Request('https://api.github.com/repos/' + REPO + '/' + path,
         headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json'})
     # Fixed GitHub host/path; no redirect forwarding of credentials.
@@ -110,7 +122,7 @@ def github_get(token, path):
 
 
 def command(c, mode, temp):
-    args = ['docker', 'run', '--rm', '--tmpfs', '/work',
+    args = ['docker', 'run', '--rm', '--user', '0:0', '--tmpfs', '/work',
             '-v', str(temp / 'tree-token') + ':/run/gh-token:ro',
             '-v', str(temp / 'geni-token') + ':/run/geni-token:ro',
             '-e', 'GH_TOKEN_FILE=/run/gh-token',

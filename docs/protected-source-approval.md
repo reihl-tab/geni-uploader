@@ -28,7 +28,7 @@ Plan confirmation is PLAN_SOURCES. Upload confirmation is UPLOAD_SOURCES and
 requires a successful prior plan from this separate workflow, first attempt,
 same exact executor and package digest, dispatched by the automation account,
 within 24 hours. The prior run's fixed hash-only run name binds mode/package;
-GitHub run metadata must match. A successful process is necessary, not enough:
+GitHub run metadata must match. Each plan admits only one upload dispatch, including failed, rejected or uncertain attempts. Serialized source concurrency checks the workflow history before starting a container; a truncated or over-limit history stops. A fresh plan is needed after any prior upload dispatch. A successful process is necessary, not enough:
 the human reviews decrypted identity, listing, duplicate/blocked state and
 safe-to-run result before separately approving the upload deployment. Plan
 approval never approves upload. A moved source branch fails its exact SHA
@@ -69,3 +69,22 @@ new absolute runner directory. GITHUB_TOKEN reads only current/prior run and
 environment protection metadata. Workflow-provided GITHUB_REPOSITORY,
 GITHUB_EVENT_NAME, GITHUB_REF, GITHUB_ACTOR, GITHUB_TRIGGERING_ACTOR,
 GITHUB_RUN_ATTEMPT, GITHUB_SHA and GITHUB_RUN_ID are independently checked.
+
+## Secret custody and runtime setup gate
+
+Before any dispatch, the operator must verify PROTECTED_SOURCE_PACKAGE_JSON,
+FAMILY_TREE_PAT and GENI_ACCESS_TOKEN exist in father-create environment
+secrets, not rely on repository-level fallback. GitHub expressions do not
+expose a secret's scope, so this is an explicit pre-dispatch setup check,
+not a claim that the job can distinguish fallback values. None of these
+three environment secrets has been installed by this implementation.
+Missing setup is a hard live-use blocker; never dispatch to test it.
+Source credentials must be copied from an authorized saved secret through
+the approved secret-sync route, without printing or passing values in chat.
+
+The shared geni-upload concurrency is deliberate: both source workflows
+must not race on status or duplicate listing. The existing workflow remains
+unchanged. Containers explicitly run as uid0 inside Docker; host token files
+remain0600 and directories0700. A no-secret CI smoke uses the exact pinned
+production container with network disabled to prove token readability and
+plan-directory writes. It makes no Geni request.

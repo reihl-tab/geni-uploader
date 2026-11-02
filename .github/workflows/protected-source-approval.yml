@@ -1,5 +1,5 @@
 name: Geni protected - source approval
-run-name: 'protected-sources:${{ inputs.mode }}:${{ inputs.config_sha256 }}:${{ inputs.executor_sha }}'
+run-name: 'protected-sources:${{ inputs.mode }}:${{ inputs.config_sha256 }}:${{ inputs.executor_sha }}:${{ inputs.plan_run_id }}'
 on:
   workflow_dispatch:
     inputs:

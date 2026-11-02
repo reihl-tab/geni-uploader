@@ -1,6 +1,7 @@
 """Synthetic protected source approval contract and mutation-sensitive gates."""
 import copy
 import hashlib
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,9 +27,9 @@ def fixture(mode='plan'):
     run = {'head_sha': 'b' * 40, 'event': 'workflow_dispatch', 'run_attempt': 1,
            'actor': {'login': 'reihlinstinct'}, 'triggering_actor': {'login': 'reihlinstinct'},
            'path': p.WORKFLOW, 'head_branch': 'master', 'workflow_id': 999,
-           'display_title': p.title(mode, digest, 'b' * 40)}
+           'display_title': p.title(mode, digest, 'b' * 40, e['SOURCE_PLAN_RUN_ID'])}
     prior = dict(copy.deepcopy(run), status='completed', conclusion='success',
-                 updated_at='1970-01-01T00:01:40Z', display_title=p.title('plan', digest, 'b' * 40))
+                 created_at='1970-01-01T00:01:00Z', updated_at='1970-01-01T00:01:40Z', display_title=p.title('plan', digest, 'b' * 40))
     data = {'actions/runs/99002': run, 'actions/runs/99001': prior,
             'environments/father-create': {'can_admins_bypass': False,
                 'deployment_branch_policy': {'protected_branches': False, 'custom_branch_policies': True},
@@ -36,6 +37,7 @@ def fixture(mode='plan'):
                                      'reviewers': [{'reviewer': {'login': 'reihl'}}]}]},
             'environments/father-create/deployment-branch-policies': {
                 'total_count': 1, 'branch_policies': [{'name': 'master', 'type': 'branch'}]}}
+    data['actions/workflows/protected-source-approval.yml/runs?event=workflow_dispatch&per_page=100&created=%3E%3D1970-01-01T00:01:00Z'] = {'total_count': 1, 'workflow_runs': [dict(run, id=99002)]}
     return c, e, data
 
 
@@ -144,8 +146,7 @@ def test_main_never_prints_external_exception(monkeypatch, capsys):
 
 def test_workflow_gate_and_original_route_unchanged():
     root = Path(__file__).resolve().parents[1]
-    original = subprocess.check_output(['git', 'show', 'e53bb54980d1ce73da7963686685f4746fa9c801:.github/workflows/geni-upload.yml'], cwd=root)
-    assert (root / '.github/workflows/geni-upload.yml').read_bytes() == original
+    assert hashlib.sha256((root / '.github/workflows/geni-upload.yml').read_bytes()).hexdigest() == '7759137b504cfbf20fd8e868cbb612ffae4a510a57cd47bf32142eebc16592bf'
     s = (root / p.WORKFLOW).read_text()
     for gate in ['environment: father-create', 'github.sha == inputs.executor_sha',
                  'github.run_attempt == 1', 'github.actor == \'reihlinstinct\'',
@@ -154,3 +155,55 @@ def test_workflow_gate_and_original_route_unchanged():
                  'persist-credentials: false', 'retention-days: 1', 'if: always()']:
         assert gate in s
     assert 'workflow_dispatch:' in s and 'schedule:' not in s and 'pull_request:' not in s
+
+
+@pytest.mark.parametrize('state', ['queued', 'in_progress', 'completed', 'waiting'])
+def test_one_upload_per_plan_even_failed_or_rejected(state):
+    _, e, data = fixture('run')
+    history = next(v for k, v in data.items() if '/runs?' in k)
+    history['workflow_runs'].append(dict(data['actions/runs/99002'], id=99003, status=state))
+    history['total_count'] += 1
+    with pytest.raises(p.Blocked): p.validate(e, data.__getitem__, lambda: 200)
+
+
+@pytest.mark.parametrize('count', [99, 100])
+def test_history_truncation_or_limit_blocks(count):
+    _, e, data = fixture('run'); history = next(v for k, v in data.items() if '/runs?' in k)
+    history['total_count'] = count
+    with pytest.raises(p.Blocked): p.validate(e, data.__getitem__, lambda: 200)
+
+
+@pytest.mark.parametrize('path', ['environments/father-create-x', 'environments/father-create/secrets',
+                                  'actions/runs/1/other', 'actions/runs/../ZZ', 'ZZ'])
+def test_github_path_allowlist_exact(path):
+    with pytest.raises(p.Blocked): p.github_get('ZZ-token', path)
+
+
+def test_parsed_workflow_all_dispatch_clauses_and_secret_scope():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    workflow = yaml.safe_load((root / p.WORKFLOW).read_text())
+    job = workflow['jobs']['source']; gate = job['if']
+    clauses = ["github.repository == 'reihlinstinct/geni-uploader'",
+               "github.event_name == 'workflow_dispatch'", "github.ref == 'refs/heads/master'",
+               'github.sha == inputs.executor_sha', "github.actor == 'reihlinstinct'",
+               "github.triggering_actor == 'reihlinstinct'", 'github.run_attempt == 1',
+               "inputs.mode == 'plan'", "inputs.confirm == 'PLAN_SOURCES'", "inputs.plan_run_id == ''",
+               "inputs.mode == 'run'", "inputs.confirm == 'UPLOAD_SOURCES'", "inputs.plan_run_id != ''"]
+    for clause in clauses: assert clause in gate
+    assert job['environment'] == 'father-create'
+    artifact = next(x for x in job['steps'] if x.get('uses', '').startswith('actions/upload-artifact@'))
+    assert artifact['with']['path'] == '${{ runner.temp }}/protected-source/encrypted/*.age'
+    for name, value in workflow['jobs'].items():
+        if 'secrets.' in json.dumps(value): assert name == 'source' and value['environment'] == 'father-create'
+    step = next(x for x in job['steps'] if 'SOURCE_PACKAGE_JSON' in x.get('env', {}))
+    assert step['env']['SOURCE_PACKAGE_JSON'] == '${{ secrets.PROTECTED_SOURCE_PACKAGE_JSON }}'
+    assert step['env']['SOURCE_TREE_PAT'] == '${{ secrets.FAMILY_TREE_PAT }}'
+    assert step['env']['GENI_ACCESS_TOKEN'] == '${{ secrets.GENI_ACCESS_TOKEN }}'
+
+
+def test_full_history_page_blocks_even_when_length_matches():
+    _, e, data = fixture('run'); history = next(v for k, v in data.items() if '/runs?' in k)
+    history['total_count'] = 100
+    history['workflow_runs'] = [{'id': n, 'display_title': 'ZZ-other-plan'} for n in range(100)]
+    with pytest.raises(p.Blocked): p.validate(e, data.__getitem__, lambda: 200)
