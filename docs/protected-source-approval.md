@@ -88,3 +88,12 @@ unchanged. Containers explicitly run as uid0 inside Docker; host token files
 remain0600 and directories0700. A no-secret CI smoke uses the exact pinned
 production container with network disabled to prove token readability and
 plan-directory writes. It makes no Geni request.
+
+## Test contract follow-up
+
+Issue #693: expression normalization must preserve every character inside
+single-quoted GitHub expression literals, including doubled-quote escapes.
+Only whitespace outside literals may be removed. Artifact checks normalize
+action-reference casing before classifying all upload-artifact steps.
+Negative synthetic mutations cover changed literal whitespace and mixed-case
+extra plaintext uploads. Runtime and workflow permissions are unchanged.
