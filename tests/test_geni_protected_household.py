@@ -278,3 +278,27 @@ def test_workflow_protection_and_clear_route_name():
                  'persist-credentials: false', 'if: always()', 'retention-days: 1'):
         assert text in s
     assert 'GENI_ACCESS_TOKEN:' not in s and 'geni_protected_household_create.py' in s
+
+
+def test_failed_graph_raw_saved_before_proof_with_latch_closed():
+    c = plan(); v, model, _ = wired(c, 'extra_edge'); evidence = []
+    r = m.execute(c, p.IO(v, evidence=evidence.append), Store(),
+                  lambda _: b'ZZ-cipher', lambda: 200)
+    assert r['phase'] == 'STOPPED' and len(model.posts) == 1 and v.pending
+    raw = [x for x in evidence if x['stage'] == 'family_raw'][-1]
+    assert raw['value']['nodes'][ANCHOR]['edges']['union-99999'] == {'rel': 'partner'}
+    proof = evidence[-1]
+    assert proof['failure'] == 'exact_graph_mismatch' and proof['node_set_equal'] is True
+    assert proof['expected_graph'][UNION]['profile-99201'] == 'child'
+    assert proof['retry_allowed'] is False and 'graph' not in p.IO(v).proofs
+    with pytest.raises(m.shared.Blocked):
+        p.IO(v).add(ANCHOR, 'child', m.vendor_payload(c['entries'][1]['payload']))
+
+
+def test_evidence_storage_failure_before_proof_blocks_next_send():
+    c = plan(); v, model, _ = wired(c)
+    def fail_after_create(value):
+        if model.posts: raise OSError()
+    r = m.execute(c, p.IO(v, evidence=fail_after_create), Store(),
+                  lambda _: b'ZZ-cipher', lambda: 200)
+    assert r['phase'] == 'STOPPED' and len(model.posts) == 1 and v.pending

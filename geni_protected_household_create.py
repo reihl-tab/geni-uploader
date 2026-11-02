@@ -7,7 +7,7 @@ from pathlib import Path
 
 import geni_protected_household_model as core
 from geni_uploader.core.parent_contract import profile_id
-from geni_uploader.core.people import Blocked, exact, require  # noqa: F401 - public boundary type
+from geni_uploader.core.people import Blocked, exact, require
 from one_time_parent_pilot import (
     FIELDS,
     HTTPS,
@@ -59,9 +59,10 @@ class ScopedVendor(HTTPS):
 
 
 class IO(BaseIO):
-    def __init__(self, client, *, debug=False):
+    def __init__(self, client, *, debug=False, evidence=None):
         super().__init__(client, debug=debug)
         self.proofs = {}
+        self.evidence = evidence
 
     def get_profile(self, target):
         actual = self.request('GET', '/api/' + target + '?fields=' + FIELDS + '&only_ids=true')
@@ -72,6 +73,9 @@ class IO(BaseIO):
     def get_family(self, target):
         c = self.client
         actual = super().get_family(target)
+        if self.evidence is not None:
+            self.evidence({'phase': 'OBSERVED_BEFORE_PROOF', 'stage': 'family_raw',
+                           'target': target, 'value': copy.deepcopy(actual), 'retry_allowed': False})
         if c.pending and c.created:
             if target == c.plan['anchor']:
                 graph = copy.deepcopy(c.graph)
@@ -85,7 +89,18 @@ class IO(BaseIO):
                     graph[c.target] = {target: 'partner', created: 'partner'}
                 else:
                     graph[c.target][created] = 'child'
-                core.shared.graph_check(actual, target, graph, external_edges=c.plan['external_edges'])
+                try:
+                    core.shared.graph_check(actual, target, graph, external_edges=c.plan['external_edges'])
+                except Blocked:
+                    if self.evidence is not None:
+                        nodes = actual.get('nodes') if type(actual) is dict else None
+                        expected = set(graph) | {n for members in graph.values() for n in members}
+                        self.evidence({'phase': 'STOPPED', 'stage': 'anchor_graph_proof',
+                            'failure': 'exact_graph_mismatch', 'retry_allowed': False,
+                            'node_set_equal': type(nodes) is dict and set(nodes) == expected,
+                            'expected_graph': copy.deepcopy(graph),
+                            'expected_external_edges': copy.deepcopy(c.plan['external_edges'])})
+                    raise
                 c.unions.add(c.target)  # only after exact anchor graph validated
                 self.proofs['graph'] = graph
                 self.proofs['anchor'] = copy.deepcopy(actual)
@@ -199,7 +214,7 @@ def run(env):
         stage = 'vendor_credential'
         vendor = ScopedVendor(env.get('GENI_SECONDARY_ACCESS_TOKEN', ''), approved)
         stage = 'execute_or_storage'
-        report = core.execute(approved, IO(vendor, debug=debug in ('1', 'true')), Store(private), save, time.time)
+        report = core.execute(approved, IO(vendor, debug=debug in ('1', 'true'), evidence=save), Store(private), save, time.time)
         return report['phase'] == 'VERIFIED'
     except Exception as exc:  # noqa: BLE001 - terminal boundary, no external text
         save({'phase': 'STOPPED', 'retry_allowed': False, 'stage': 'setup_or_storage',
