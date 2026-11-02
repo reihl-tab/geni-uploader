@@ -32,22 +32,37 @@ def normalized_ast_hash(source):
     while end < len(tree.body) and isinstance(tree.body[end], (ast.Import, ast.ImportFrom)):
         end += 1
     tree.body[first:end] = sorted(tree.body[first:end], key=ast.dump)
-    def stable(node):
-        if isinstance(node, ast.AST):
-            return [type(node).__name__, [[key, stable(value)]
-                    for key, value in ast.iter_fields(node)
-                    # Version-added fields normalized to their pre-addition
-                    # shape: type_params (3.12) when empty, is_lazy (PEP 810,
-                    # 3.15) when 0 - both mean "construct not used", so the
-                    # canonical hash is portable. A used lazy import
-                    # (is_lazy=1) is still hashed.
-                    if not ((key == "type_params" and value == [])
-                            or (key == "is_lazy" and value == 0))]]
-        if isinstance(node, list):
-            return [stable(value) for value in node]
-        return [type(node).__name__, repr(node)]
-    return hashlib.sha256(json.dumps(stable(tree), sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(_stable_canonical(tree), sort_keys=True).encode()).hexdigest()
 
+
+def _stable_canonical(node):
+    if isinstance(node, ast.AST):
+        return [type(node).__name__, [[key, _stable_canonical(value)]
+                for key, value in ast.iter_fields(node)
+                # Version-added fields normalized to their pre-addition
+                # shape: type_params (3.12) when empty, is_lazy (PEP 810,
+                # 3.15) when 0 - both mean "construct not used", so the
+                # canonical hash is portable. A used lazy import
+                # (is_lazy=1) is still hashed.
+                if not ((key == "type_params" and value == [])
+                        or (key == "is_lazy" and value == 0))]]
+    if isinstance(node, list):
+        return [_stable_canonical(value) for value in node]
+    return [type(node).__name__, repr(node)]
+
+
+
+def test_is_lazy_one_changes_the_canonical_shape_on_every_python():
+    # #658: hard mutation protection on the gating legs (the lazy-syntax
+    # test below only runs on the informational py315 leg). iter_fields
+    # honours an instance-level _fields, so setting the field explicitly
+    # simulates a 3.15 lazy import on any interpreter.
+    eager = ast.parse("import os")
+    lazy = ast.parse("import os")
+    node = lazy.body[0]
+    node._fields = tuple(node._fields) + ("is_lazy",)
+    node.is_lazy = 1
+    assert _stable_canonical(eager) != _stable_canonical(lazy)
 
 
 def test_lazy_import_changes_the_normalized_hash():
