@@ -4,7 +4,7 @@ import json
 import os
 import re
 import stat
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 FIELDS = {'schema', 'profile_url', 'document_guid', 'sources_tab', 'add_source_count',
           'citation_dialog', 'profile_edit', 'login', 'challenge', 'restricted', 'rows'}
@@ -18,9 +18,6 @@ class QuietParser(argparse.ArgumentParser):
         self.exit(2, 'citation checker: invalid arguments\n')
 
 
-RESULTS = ('invalid_observation', 'identity_mismatch', 'login_required', 'challenge',
-           'restricted', 'unsupported_layout', 'controls_observed')
-
 
 def profile_guid(url):
     if not isinstance(url, str) or len(url) > 2048:
@@ -32,8 +29,13 @@ def profile_guid(url):
     if (u.scheme != 'https' or u.netloc != 'www.geni.com' or u.query
             or u.fragment not in ('', '/tab/sources') or any(ord(c) < 33 for c in url)):
         return None
-    match = re.fullmatch(r'/people/[A-Za-z0-9_-]+/([1-9][0-9]{0,29})', u.path)
-    return match.group(1) if match else None
+    match = re.fullmatch(r'/people/([^/]+)/([1-9][0-9]{0,29})', u.path)
+    if not match:
+        return None
+    slug = unquote(match.group(1))
+    if any(c in '/\\' or ord(c) < 33 or ord(c) == 127 for c in slug):
+        return None
+    return match.group(2)
 
 
 def identifier(value):

@@ -134,3 +134,13 @@ class CitationUICheckTest(unittest.TestCase):
             fifo = Path(td) / 'fifo'; os.mkfifo(fifo)
             with self.assertRaises(ValueError): c.load(fifo)
             with self.assertRaises((OSError, ValueError)): c.load(td)
+
+    def test_cosmetic_slug_and_sources_fragment(self):
+        for slug in ['ZZ.Test', '%D7%A9%D7%A8%D7%94-ZZ', 'ZZ-Test']:
+            for suffix in ['', '#/tab/sources']:
+                o = fixture()
+                o['profile_url'] = 'https://www.geni.com/people/' + slug + '/111' + suffix
+                self.assertEqual(c.check(o, '111', '222')['status'], 'controls_observed')
+        for slug in ['ZZ%2FTest', 'ZZ%5cTest', 'ZZ%00Test', 'ZZ%20Test', 'ZZ%7fTest']:
+            o = fixture(); o['profile_url'] = 'https://www.geni.com/people/' + slug + '/111'
+            self.assertEqual(c.check(o, '111', '222')['status'], 'identity_mismatch')
