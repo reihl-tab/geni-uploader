@@ -22,20 +22,24 @@ def fixture():
         'actor': {'login': 'reihlinstinct'}, 'triggering_actor': {'login': 'reihlinstinct'}},
         p.ENV: {'can_admins_bypass': False, 'protection_rules': [
             {'type': 'required_reviewers', 'prevent_self_review': True,
-             'reviewers': [{'reviewer': {'login': 'reihl'}}]}]},
+             'reviewers': [{'reviewer': {'login': 'reihl'}}]}, {'type': 'branch_policy'}]},
         p.ENV + '/deployment-branch-policies': {'total_count': 1,
             'branch_policies': [{'name': 'master', 'type': 'branch'}]},
         p.ENV + '/secrets?per_page=100': {'total_count': 0, 'secrets': []},
         p.SRC: {'name': 'GENI_SECONDARY_ACCESS_TOKEN', 'updated_at': env['BRIDGE_SOURCE_UPDATED_AT']},
         p.ENV + '/secrets/public-key': {'key': base64.b64encode(b'Z' * 32).decode(), 'key_id': '991'},
-        p.DEST: {'name': 'GENI_ACCESS_TOKEN'}}
+        p.DEST: {'name': 'GENI_ACCESS_TOKEN', 'updated_at': '2026-11-02T14:00:00Z'}}
     return env, replies
 
 
 def execute(env, replies):
-    calls = []; seals = []
+    calls = []; seals = []; written = []
     def request(method, path, body=None):
-        calls.append((method, path, body)); return copy.deepcopy(replies[path]) if method == 'GET' else None
+        calls.append((method, path, body))
+        if method == 'PUT': written.append(True); return None
+        actual = copy.deepcopy(replies[path])
+        if path == p.DEST and written: actual['updated_at'] = '2026-11-02T14:01:00Z'
+        return actual
     def seal(value, public):
         seals.append((value, public)); return base64.b64encode(b'Z' * (len(value.encode()) + 48)).decode()
     return p.execute(env, request, seal), calls, seals
@@ -119,3 +123,49 @@ def test_workflow_exact_gate_all_steps_secret_scope():
     assert env['BRIDGE_SOURCE_VALUE'] == '${{ secrets.GENI_SECONDARY_ACCESS_TOKEN }}'
     assert env['BRIDGE_WRITER'] == '${{ secrets.SOURCE_BRIDGE_WRITER }}'
     assert flow['concurrency'] == {'group': 'geni-upload', 'cancel-in-progress': False}
+
+
+def test_seal_child_receives_no_credentials(monkeypatch):
+    from types import SimpleNamespace
+    seen = []
+    monkeypatch.setenv('BRIDGE_WRITER', 'ZZ-writer')
+    monkeypatch.setenv('BRIDGE_SOURCE_VALUE', 'ZZ-source')
+    monkeypatch.setenv('GITHUB_TOKEN', 'ZZ-github')
+    def run(args, **kwargs):
+        seen.append(kwargs); return SimpleNamespace(stdout=b'ZZ-cipher')
+    monkeypatch.setattr(p.subprocess, 'run', run)
+    assert p.seal('ZZ-source', 'ZZ-public') == 'ZZ-cipher'
+    assert set(seen[0]['env']) == {'PATH'}
+    assert all(not key.startswith('BRIDGE_') for key in seen[0]['env'])
+
+
+@pytest.mark.parametrize('kind', ['meta_path', 'meta_attempt', 'extra_reviewer', 'secret_length',
+                                  'cipher_length', 'after_name', 'unchanged_time', 'wait_timer'])
+def test_independent_negative_checks_before_or_after_one_put(kind):
+    e, data = fixture(); puts = []; reads = []
+    if kind == 'meta_path': data['actions/runs/99101']['path'] = 'ZZ-other'
+    if kind == 'meta_attempt': data['actions/runs/99101']['run_attempt'] = 2
+    if kind == 'extra_reviewer': data[p.ENV]['protection_rules'][0]['reviewers'].append({'reviewer': {'login': 'reihl'}})
+    if kind == 'secret_length': data[p.ENV + '/secrets?per_page=100']['total_count'] = 1
+    if kind == 'wait_timer': data[p.ENV]['protection_rules'].append({'type': 'wait_timer'})
+    def request(method, path, body=None):
+        if method == 'PUT': puts.append(body); return None
+        value = copy.deepcopy(data[path])
+        if path == p.DEST:
+            reads.append(True)
+            if len(reads) == 2:
+                if kind == 'after_name': value['name'] = 'ZZ-wrong'
+                if kind != 'unchanged_time': value['updated_at'] = '2026-11-02T14:01:00Z'
+        return value
+    cipher = base64.b64encode(b'Z' * (56 if kind == 'cipher_length' else 57)).decode()
+    with pytest.raises(p.source.Blocked): p.execute(e, request, lambda *_: cipher)
+    assert len(puts) == (1 if kind in ('after_name', 'unchanged_time') else 0)
+
+
+def test_node_and_package_runner_versions_pinned():
+    root = Path(__file__).resolve().parents[1]; flow = yaml.safe_load((root / p.WORKFLOW).read_text())
+    steps = flow['jobs']['bridge']['steps']; setup = next(x for x in steps if x.get('uses', '').startswith('actions/setup-node@'))
+    assert setup['uses'] == 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020'
+    assert setup['with']['node-version'] == '22.23.0'
+    install = next(x for x in steps if x.get('name') == 'Install exact reviewed sealed-box dependency')
+    assert '10.9.4' in install['run'] and '--ignore-scripts' in install['run']

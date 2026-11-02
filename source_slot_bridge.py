@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import urllib.error
 import urllib.request
 
 import protected_source_approval as source
@@ -30,7 +31,9 @@ def execute(env, request, seal):
                    and meta['event'] == 'workflow_dispatch'
                    and meta['actor']['login'] == meta['triggering_actor']['login'] == 'reihlinstinct')
     protection = request('GET', ENV)
-    source.require(protection['can_admins_bypass'] is False)
+    source.require(protection['can_admins_bypass'] is False
+                   and {x['type'] for x in protection['protection_rules']} == {'required_reviewers', 'branch_policy'}
+                   and len(protection['protection_rules']) == 2)
     reviewer = next(x for x in protection['protection_rules'] if x['type'] == 'required_reviewers')
     source.require(reviewer['prevent_self_review'] is True and len(reviewer['reviewers']) == 1
                    and reviewer['reviewers'][0]['reviewer']['login'] == 'reihl')
@@ -52,9 +55,14 @@ def execute(env, request, seal):
     source.require(type(cipher) is str and len(base64.b64decode(cipher, validate=True)) == len(value.encode()) + 48)
     # Recheck source metadata immediately before one destination write.
     source.require(request('GET', SRC) == before)
+    prior = request('GET', DEST)
+    source.require(prior is None or prior.get('name') == 'GENI_ACCESS_TOKEN')
     request('PUT', DEST, {'encrypted_value': cipher, 'key_id': key['key_id']})
     after = request('GET', DEST)
-    source.require(after['name'] == 'GENI_ACCESS_TOKEN')
+    source.require(after['name'] == 'GENI_ACCESS_TOKEN'
+                   and type(after['updated_at']) is str
+                   and re.fullmatch(r'[0-9TZ:-]{20}', after['updated_at'])
+                   and (prior is None or after['updated_at'] != prior.get('updated_at')))
     return True
 
 
@@ -69,14 +77,20 @@ def transport(token, method, path, body=None):
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *_args):
             raise source.Blocked()
-    with urllib.request.build_opener(NoRedirect).open(req, timeout=30) as response:
-        data = response.read(1_000_000)
-        return json.loads(data) if data else None
+    try:
+        with urllib.request.build_opener(NoRedirect).open(req, timeout=30) as response:
+            data = response.read(1_000_000)
+            return json.loads(data) if data else None
+    except urllib.error.HTTPError as exc:
+        if method == 'GET' and path == DEST and exc.code == 404:
+            return None
+        raise
 
 
 def seal(value, public):
     result = subprocess.run(['node', 'oauth-bootstrap/source-slot-seal.mjs'],
-        input=json.dumps({'value': value, 'public': public}).encode(), capture_output=True, check=True)
+        input=json.dumps({'value': value, 'public': public}).encode(), capture_output=True, check=True,
+        env={'PATH': os.environ.get('PATH', '/usr/bin:/bin')})
     return result.stdout.decode().strip()
 
 

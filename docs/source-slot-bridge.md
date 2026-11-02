@@ -36,3 +36,32 @@ metadata; BRIDGE_SOURCE_VALUE is repository secret injection only, never input.
 BRIDGE_WRITER is the dedicated SOURCE_BRIDGE_WRITER environment secret.
 GITHUB_REPOSITORY/GITHUB_EVENT_NAME/GITHUB_REF/GITHUB_ACTOR/
 GITHUB_TRIGGERING_ACTOR/GITHUB_RUN_ATTEMPT/GITHUB_SHA/GITHUB_RUN_ID are verified.
+
+## Residual source and writer scope
+
+The current secondary source is a repository secret. Any workflow on a branch
+with repository-secret access can receive it without this deployment gate.
+This bridge protects the destination transfer, not historical source custody.
+After successful copy, propose removing the repository copy and changing the
+site writer to an environment-scoped secondary secret. This is a separate
+owner decision and reviewed site change, because deleting it now would break
+existing secondary consumers and the site's refresh destination. Do not delete
+or move it automatically. No claim of environment-only source custody is made.
+
+The writer can affect other secrets within its GitHub permission scope. Approve
+only the exact independently reviewed executor SHA, never an unreviewed branch.
+Master's live protection must be checked before enabling this writer; if PR
+review is not enforced, report that gap and require the owner's decision.
+The sealer child receives PATH only, never writer/source environment variables.
+Destination metadata is read before PUT (404 is allowed) and must have a changed
+updated_at after it. This proves metadata changed, not plaintext equality;
+GitHub secrets are unreadable and the next identity plan remains required.
+
+Master live check: strict test/coverage checks and enforce_admins=true, but
+required_pull_request_reviews is null by the owner's standing policy. Do not
+change it here. The gate is independent exact-head review plus the owner's
+deployment approval of that exact reviewed SHA. SOURCE_BRIDGE_WRITER remains
+uninstalled until separate owner go. Repository-secondary custody migration
+is deferred to a separate reviewed change and must not delay or be silently
+bundled into this fixed copy. Node22.23.0 and npm10.9.4 are checked exactly;
+setup-node action and npm package lock are pinned.

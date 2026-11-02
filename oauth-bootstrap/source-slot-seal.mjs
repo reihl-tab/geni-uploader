@@ -1,7 +1,13 @@
 // Private stdin to sealed stdout, consumed only by the Python parent process.
 import sealedbox from 'tweetnacl-sealedbox-js';
-let raw = '';
-for await (const chunk of process.stdin) raw += chunk;
+const chunks = [];
+let length = 0;
+for await (const chunk of process.stdin) {
+  length += chunk.length;
+  if (length > 100000) process.exit(1);
+  chunks.push(chunk);
+}
+const raw = Buffer.concat(chunks).toString('utf8');
 try {
   const value = JSON.parse(raw);
   const cipher = sealedbox.seal(new TextEncoder().encode(value.value), new Uint8Array(Buffer.from(value.public, 'base64')));
