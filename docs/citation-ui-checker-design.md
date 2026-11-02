@@ -47,3 +47,8 @@ After offline checker review, capture the permitted live citation form without f
 Output file must not already exist; it is created mode0600. Default stdout is a fixed status only. `--debug` adds only a fixed offline-analysis message. The current release intentionally has no DOM collector: an operator must supply a reviewed normalized observation after inspecting the actual form. Synthetic fixture success is not a live-site result. This is the offline first stage, not an operational browser adapter.
 
 All required flags: `--observation`, `--expected-profile`, `--expected-document`, `--output`. Optional `--debug` is disabled by default.
+
+
+## Review hardening
+
+The first supported layout contains only one Death Date row. Other labels, duplicate rows and mixed valid-plus-unknown rows stop; a useful row cannot mask unsupported extras. This conservative shape may reject a real dialog with additional facts until a separately reviewed adapter describes them. Argument parse errors are fixed text with no input echo. Observation input is an O_NOFOLLOW nonblocking open, verified regular by fstat and read at most100001bytes before the100000byte limit is applied. No symlinks, FIFOs or directories are admitted.

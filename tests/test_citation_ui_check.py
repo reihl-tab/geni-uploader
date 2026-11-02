@@ -102,3 +102,35 @@ class CitationUICheckTest(unittest.TestCase):
     def test_mutation_free(self):
         o = fixture(); before = copy.deepcopy(o)
         c.check(o, '111', '222'); self.assertEqual(o, before)
+
+    def test_mixed_valid_and_unsupported_extra_rows_stop(self):
+        for extras in [
+                [{'label': 'Birth Date', 'value_controls': 1, 'note_controls': 1,
+                  'enabled': True, 'readonly': False}] * 2,
+                [{'label': 'Unknown-layout', 'value_controls': 20, 'note_controls': 20,
+                  'enabled': True, 'readonly': False}],
+                [fixture()['rows'][0]]]:
+            o = fixture(); o['rows'].extend(copy.deepcopy(extras))
+            self.assertEqual(c.check(o, '111', '222')['status'], 'unsupported_layout')
+
+    def test_argument_errors_never_echo_values_or_paths(self):
+        for args in [[], ['--ZZ-secret'], ['--observation', 'ZZ-private-path'],
+                     ['--debug=ZZ-secret']]:
+            with (contextlib.redirect_stdout(io.StringIO()) as out,
+                  contextlib.redirect_stderr(io.StringIO()) as err,
+                  self.assertRaises(SystemExit) as raised):
+                c.main(args)
+            self.assertEqual(raised.exception.code, 2)
+            self.assertEqual(out.getvalue(), '')
+            self.assertEqual(err.getvalue(), 'citation checker: invalid arguments\n')
+
+    def test_bounded_regular_file_input(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / 'in.json'
+            p.write_bytes(b' ' * 100_001)
+            with self.assertRaises(ValueError): c.load(p)
+            alias = Path(td) / 'alias'; alias.symlink_to(p)
+            with self.assertRaises(OSError): c.load(alias)
+            fifo = Path(td) / 'fifo'; os.mkfifo(fifo)
+            with self.assertRaises(ValueError): c.load(fifo)
+            with self.assertRaises((OSError, ValueError)): c.load(td)

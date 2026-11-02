@@ -3,12 +3,21 @@ import argparse
 import json
 import os
 import re
-from pathlib import Path
+import stat
 from urllib.parse import urlsplit
 
 FIELDS = {'schema', 'profile_url', 'document_guid', 'sources_tab', 'add_source_count',
           'citation_dialog', 'profile_edit', 'login', 'challenge', 'restricted', 'rows'}
 ROW_FIELDS = {'label', 'value_controls', 'note_controls', 'enabled', 'readonly'}
+# First release admits only the single observed fact row, no inferred extra layout.
+ALLOWED_LABELS = {'Death Date'}
+
+
+class QuietParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.exit(2, 'citation checker: invalid arguments\n')
+
+
 RESULTS = ('invalid_observation', 'identity_mismatch', 'login_required', 'challenge',
            'restricted', 'unsupported_layout', 'controls_observed')
 
@@ -62,6 +71,9 @@ def check(observation, expected_profile, expected_document):
     if (profile_guid(o['profile_url']) != expected_profile
             or o['document_guid'] != expected_document):
         return result('identity_mismatch')
+    labels = [r['label'] for r in o['rows']]
+    if any(label not in ALLOWED_LABELS for label in labels) or len(set(labels)) != len(labels):
+        return result('unsupported_layout')
     death = [r for r in o['rows'] if r['label'] == 'Death Date']
     if (not o['sources_tab'] or o['add_source_count'] != 1 or not o['citation_dialog']
             or o['profile_edit'] or len(death) != 1 or not death[0]['enabled']
@@ -72,7 +84,11 @@ def check(observation, expected_profile, expected_document):
 
 
 def load(path):
-    raw = Path(path).read_bytes()
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    with os.fdopen(fd, 'rb') as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError()
+        raw = stream.read(100_001)
     if len(raw) > 100_000:
         raise ValueError()
     def unique(pairs):
@@ -86,7 +102,7 @@ def load(path):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = QuietParser(description=__doc__)
     parser.add_argument('--observation', required=True)
     parser.add_argument('--expected-profile', required=True)
     parser.add_argument('--expected-document', required=True)
