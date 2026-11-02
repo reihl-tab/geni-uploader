@@ -81,3 +81,27 @@ both parents, and all existing profile/anchor/reciprocal proofs still apply.
 Missing children after a consumed creation means STOP, not success or retry.
 Old household plans reject the new field. No marker, send count, route, expiry,
 source/config hash or protected approval requirement changes.
+
+## Explicit N-child package (#687)
+
+Optional plan integer declared_children defaults1 and must exactly equal the
+number of distinct entries in the approved immutable plan. It is not a boolean,
+count guess, or open-ended request to discover more children. Every entry targets
+the same verified two-parent union. The wrapper no longer imposes the previous
+one/two/four-entry cap. Existing graph/node response bounds,20-member union proof
+capacity,25-minute job deadline and exact expiry remain technical safety limits;
+no claim of unlimited size or indefinite execution. Request budget is derived
+exactly from initial identity/profiles/family/unions plus7requests per entry.
+The existing workflow name/confirmation remain compatibility labels, not size
+permissions. Exact owner-approved plan/config hash fixes the count and words.
+
+Each entry has its own unchanged consumed marker, ACK and final receipt. Exact
+profile, anchor, reciprocal and explicit union proof must finish before another
+POST is admitted, including the independent IO proof latch. After any uncertain
+effect or proof/storage failure, remaining entries are not sent. No retry,
+marker reset or automatic repair. Re-run does not resume a partly completed
+package: a fresh separately approved remaining-entry plan would be needed.
+First-child omission applies only before any child exists in the expected target
+graph, never after the first create or before any subsequent entry. Old household
+workflow keeps its earlier default and rejects this opt-in field. Every payload,
+the joint effect, expiry and hidden-child risk need owner approval before dispatch.

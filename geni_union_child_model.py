@@ -11,15 +11,20 @@ def plan(value):
     require(type(value) is dict)
     flag = value.get('accept_first_child_omission', False)
     require(type(flag) is bool)
-    base = {key: leaf for key, leaf in value.items() if key != 'accept_first_child_omission'}
-    c = shared_model.plan(base, allow_hebrew_only=True)
-    require(c['mode'] == 'child' and len(c['entries']) == 1
+    count = value.get('declared_children', 1)
+    require(type(count) is int and count > 0)
+    base = {key: leaf for key, leaf in value.items()
+            if key not in ('accept_first_child_omission', 'declared_children')}
+    c = shared_model.plan(base, allow_hebrew_only=True, max_entries=count)
+    require(c['mode'] == 'child' and len(c['entries']) == count
             and c['accept_omitted_union_fields'] is False)
     if flag:
         members = c['family'][c['target_union']]
         require(len(members) == 2 and set(members.values()) == {'partner'})
     if 'accept_first_child_omission' in value:
         c['accept_first_child_omission'] = flag
+    if 'declared_children' in value:
+        c['declared_children'] = count
     return c
 
 
@@ -28,8 +33,9 @@ def execute(value, io, store, save, clock):
     # not reopen a consumed named operation from another household workflow.
     c = plan(value)
     flag = c.pop('accept_first_child_omission', False)
+    count = c.pop('declared_children', 1)
     return shared_model.execute(c, io, store, save, clock, allow_hebrew_only=True,
-                                accept_first_child_omission=flag)
+                                accept_first_child_omission=flag, max_entries=count)
 
 
 def vendor_payload(value):

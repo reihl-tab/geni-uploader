@@ -64,7 +64,7 @@ def graph_spec(value):
     return copy.deepcopy(value)
 
 
-def plan(value, *, allow_hebrew_only=False):
+def plan(value, *, allow_hebrew_only=False, max_entries=4):
     exact(value, ('schema', 'mode', 'owner', 'expect_name', 'anchor', 'profiles', 'family',
                   'target_union', 'external_edges', 'entries', 'expires_at', 'allow_unknown_merge',
                   'accept_hidden_duplicate_risk', 'accept_private_create_risk',
@@ -104,7 +104,7 @@ def plan(value, *, allow_hebrew_only=False):
     else:
         require(target is None)  # always a new partner union, never replace an existing partner
     entries = value['entries']
-    require(type(entries) is list and (1 <= len(entries) <= 4 if value['mode'] == 'child'
+    require(type(entries) is list and (1 <= len(entries) <= max_entries if value['mode'] == 'child'
                                       else len(entries) == 1))
     keys, names = set(), set()
     for entry in entries:
@@ -161,8 +161,8 @@ def union_check(actual, target, members, accept_omitted):
 
 
 def execute(value, io, store, save, clock, *, allow_hebrew_only=False,
-            accept_first_child_omission=False):
-    c = plan(value, allow_hebrew_only=allow_hebrew_only)
+            accept_first_child_omission=False, max_entries=4):
+    c = plan(value, allow_hebrew_only=allow_hebrew_only, max_entries=max_entries)
     graph = copy.deepcopy(c['family'])
     target = c['target_union']
     known = set(c['profiles'])

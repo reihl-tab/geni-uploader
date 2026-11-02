@@ -37,10 +37,13 @@ class ScopedVendor(HTTPS):
         self.created = []
         self.graph = copy.deepcopy(value['family'])
         self.target = value['target_union']
+        # Exact model request budget: initial identity/profiles/family/unions,
+        # then family+union+POST+profile+anchor+reciprocal+union per entry.
+        self.budget = 2 + len(value['profiles']) + len(value['family']) + 7 * len(value['entries'])
 
     def admit_vendor(self, method, route):
         c = self.plan
-        require(self.calls < 60 and time.time() < c['expires_at'])
+        require(self.calls < self.budget and time.time() < c['expires_at'])
         if method == 'GET':
             allowed = {'/api/' + x + '?fields=' + FIELDS + '&only_ids=true' for x in self.profiles}
             allowed |= {'/api/' + x + '?fields=id,partners,children,status&only_ids=true' for x in self.unions}
@@ -48,7 +51,7 @@ class ScopedVendor(HTTPS):
             require(route in allowed)
         else:
             require(method == 'POST' and route == '/api/' + c['target_union'] + '/add-child')
-            require(not self.pending and self.post_count < 1)
+            require(not self.pending and self.post_count < len(c['entries']))
             self.pending = True
             self.post_count += 1
         self.calls += 1  # consume admission before possible timeout/wait/transport

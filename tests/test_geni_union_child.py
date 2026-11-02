@@ -342,3 +342,131 @@ def test_model_level_post_creation_omission_stops_without_transport_layer():
     assert r['phase'] == 'STOPPED' and len(model.posts) == 1
     assert r['items'][0]['phase'] == 'ACKNOWLEDGED_NOT_VERIFIED'
     assert r['stage'] == 'read_union'
+
+
+def two_plan():
+    c = old_plan(); c['accept_omitted_union_fields'] = False
+    c['declared_children'] = 2
+    return c
+
+
+def test_explicit_two_children_each_verified_before_second():
+    c = two_plan(); r, v, model, calls, _ = run(c)
+    assert r['phase'] == 'VERIFIED' and len(model.posts) == 2 and not v.pending
+    posts = [i for i, x in enumerate(calls) if x[0] == 'POST']
+    between = calls[posts[0] + 1:posts[1]]
+    assert any('/profile-99201/immediate-family?' in route for _, route, _ in between)
+    assert sum('/union-' in route for _, route, _ in between) == 2
+    assert len(r['items']) == 2 and all(x['phase'] == 'VERIFIED' for x in r['items'])
+
+
+@pytest.mark.parametrize('anomaly', ['privacy', 'description', 'claimed', 'extra_edge',
+                                   'wrong_union', 'lost_response'])
+def test_two_children_uncertainty_never_sends_second(anomaly):
+    r, v, model, _, _ = run(two_plan(), anomaly=anomaly)
+    assert r['phase'] == 'STOPPED' and len(model.posts) == 1 and v.pending
+
+
+def test_two_flag_exact_scope_not_general_unbounded_mode():
+    for count in [1, 3]:
+        c = two_plan(); c['entries'] = n_plan(count)['entries']
+        with pytest.raises(m.shared.Blocked): m.plan(c)
+    c = two_plan(); c['declared_children'] = 'true'
+    with pytest.raises(m.shared.Blocked): m.plan(c)
+    c = two_plan(); del c['declared_children']
+    with pytest.raises(m.shared.Blocked): m.plan(c)
+
+
+def test_two_children_first_child_omission_still_only_before_any_child():
+    c = first_child_plan(); c['entries'] = old_plan()['entries']; c['declared_children'] = 2
+    r, model = first_child_run(c)
+    assert r['phase'] == 'VERIFIED' and len(model.posts) == 2
+    r, model = first_child_run(c, after_omitted=True)
+    assert r['phase'] == 'STOPPED' and len(model.posts) == 1
+
+
+def test_two_markers_and_receipts_replay_cannot_recreate_first():
+    c = two_plan(); st = Store(); run(c, store=st)
+    c['expires_at'] += 50
+    r, _, model, _, _ = run(c, store=st)
+    assert r['phase'] == 'STOPPED' and not model.posts
+    import geni_protected_household_model as old
+    assert old.marker(c, c['entries'][0]) != old.marker(c, c['entries'][1])
+
+
+def n_plan(count):
+    import copy
+    c = plan(); template = c['entries'][0]
+    c['entries'] = []
+    for i in range(count):
+        entry = copy.deepcopy(template); entry['key'] = 'zz-entry-' + str(i)
+        entry['payload']['first_name'] = 'ZZ-Child-' + str(i)
+        entry['payload']['names']['en']['first_name'] = 'ZZ-Child-' + str(i)
+        entry['payload']['names']['he']['first_name'] = 'שם בדוי ' + str(i)
+        c['entries'].append(entry)
+    c['declared_children'] = count
+    return c
+
+
+def test_declared_n_not_fixed_two_or_old_four_cap():
+    for count in [1, 3, 5]:
+        c = n_plan(count); r, v, model, calls, _ = run(c)
+        assert r['phase'] == 'VERIFIED' and len(model.posts) == count
+        assert v.calls == len(calls) == v.budget
+        assert len({item['marker'] for item in r['items']}) == count
+
+
+@pytest.mark.parametrize('declared', [0, -1, True, 2.0, '2'])
+def test_declared_count_not_truthy_or_empty(declared):
+    c = n_plan(2); c['declared_children'] = declared
+    with pytest.raises(m.shared.Blocked): m.plan(c)
+
+
+def test_declared_count_mismatch_uses_unique_valid_entries():
+    for actual, declared in [(1, 2), (3, 2), (5, 3)]:
+        c = n_plan(actual)
+        assert len({e['key'] for e in c['entries']}) == actual
+        assert len({e['payload']['first_name'] for e in c['entries']}) == actual
+        c['declared_children'] = declared
+        with pytest.raises(m.shared.Blocked): m.plan(c)
+
+
+def test_transport_admission_pending_latch_direct_not_masked_by_io():
+    v = p.ScopedVendor(TOKEN, two_plan()); route = '/api/' + UNION + '/add-child'
+    v.admit_vendor('POST', route)
+    with pytest.raises(m.shared.Blocked): v.admit_vendor('POST', route)
+    assert v.post_count == 1
+
+
+def test_io_pending_latch_and_payload_binding_direct():
+    c = two_plan(); v, model, _, io = wired(c, evidence=lambda _: None)
+    wrong = m.vendor_payload(c['entries'][1]['payload'])
+    with pytest.raises(m.shared.Blocked): io.add(ANCHOR, 'child', wrong)
+    assert not model.posts and v.post_count == 0
+    actual = io.add(ANCHOR, 'child', m.vendor_payload(c['entries'][0]['payload']))
+    assert actual['id'] == 'profile-99201'
+    with pytest.raises(m.shared.Blocked): io.add(ANCHOR, 'child', wrong)
+    assert len(model.posts) == 1
+
+
+def test_io_pending_guard_independent_of_transport_admission():
+    c = two_plan(); v = p.ScopedVendor(TOKEN, c); v.pending = True
+    called = []
+    v.request = lambda *a: called.append(a) or {'id': 'profile-99201'}
+    with pytest.raises(m.shared.Blocked):
+        p.IO(v, evidence=lambda _: None).add(ANCHOR, 'child', m.vendor_payload(c['entries'][0]['payload']))
+    assert not called
+
+
+@pytest.mark.parametrize('missing', ['profile', 'anchor', 'reciprocal', 'union'])
+def test_io_verified_independent_proof_block_cannot_be_removed(missing):
+    c = two_plan(); v, model, _, io = wired(c, evidence=lambda _: None)
+    created = io.add(ANCHOR, 'child', m.vendor_payload(c['entries'][0]['payload']))['id']
+    graph = model.spec
+    # Populate real returned proofs without invoking the model execution path.
+    io.get_profile(created); io.get_family(ANCHOR); io.get_family(created); io.get_union(UNION)
+    assert io.proofs['graph'] == graph
+    io.proofs.pop(missing)
+    with pytest.raises((m.shared.Blocked, KeyError)):
+        io.verified(created, UNION, graph)
+    assert v.pending
