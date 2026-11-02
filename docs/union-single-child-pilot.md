@@ -1,0 +1,55 @@
+# Protected one-child union-target experiment
+
+Closes #681. This is a separate workflow and secret, not a change to the old
+household executor. No live action is authorized by a merge. Exact private
+source/config/executor pins, owner approval of the real one-child effect and
+protected human GitHub approval are required. New configs must have fresh
+reviewed expiry; expired packages are never extended automatically.
+
+Official union/add-child prose describes adding a child to an existing union:
+https://www.geni.com/platform/developer/help/api?path=union%2Fadd-child&version=1
+Its returned-fields table is union-shaped and locale-name support is unspecified.
+This experiment does not claim those ambiguities are settled. An offline fake
+transport can prove local guards, not live compatibility. A real creation is not
+known reversible. Wrong placement may require owner manual correction; no
+automatic repair, deletion or second attempt exists here.
+
+Only child mode, one entry and explicit union partners/children proof are admitted.
+The POST targets the exact plan union, never profile/add-child. The existing
+household model supplies identity/profile/graph proofs and its original consumed
+marker, deliberately unchanged across workflow, union, expiry or executor changes.
+The parent union must already contain exactly two partners; the baseline includes
+all visible family edges and profiles. GET reads are fixed to admitted identities,
+family nodes and unions, with a finite60-call budget and15-second pacing inherited
+from the household transport. Fixed HTTPS host, no redirect/retry/429 loop.
+
+Decoded successful ACK is encrypted locally before any ID/body interpretation.
+Only an explicit new profile ID is accepted. Union-shaped/unknown ACK is terminal,
+not permission to infer a profile from list deltas or discover extra profiles.
+Transport loss, timeout or storage failure after consumption is uncertain and
+terminal; the consumed marker is never reset. Malformed/oversize raw bytes cannot
+be retained by the existing JSON transport; this limit is unchanged and must not
+be described as raw-wire preservation. Artifact retention is one day; archive
+retained encrypted evidence promptly even for stopped runs.
+
+After one POST, read back exact payload/private/living/unclaimed profile, exact
+anchor graph, reciprocal child graph and explicit target union partners/children.
+Any omitted critical field or wrong relationship stops, never success. A separate
+owner-authorized follow-up would be required for manual correction verification
+or more children. No further send exists within this one-entry workflow.
+
+Workflow: geni-union-child-create.yml. Environment father-create retains its
+sole human reviewer, no self review/admin bypass and master-only protection.
+Separate secret UNION_CHILD_PACKAGE_JSON; existing evidence-writer and Geni token
+remain scoped to the protected job. Token OAuth scope is not independently
+verified; fixed route/method admission is the effect boundary. Merge and setup
+are not authority to dispatch. No secrets or identifying fixtures in this repo.
+
+## Entrypoint environment
+
+UNION_CHILD_CONFIG_JSON is the exact private package; UNION_CHILD_CONFIG_SHA256
+is its approved UTF-8 hash. UNION_CHILD_EXECUTOR_SHA must equal GITHUB_SHA.
+UNION_CHILD_CONFIRM must be CREATE_ONE_UNION_CHILD and UNION_CHILD_DEBUG must
+be true or1. UNION_CHILD_OUTPUT_DIR is a new absolute encrypted-evidence directory.
+UNION_CHILD_TREE_PAT is the protected private evidence-writer credential, never
+printed. GENI_SECONDARY_ACCESS_TOKEN is the protected Geni credential.
