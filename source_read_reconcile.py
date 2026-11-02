@@ -125,6 +125,8 @@ def listing(reader, prefix, capture):
     for page in range(1, MAX_PAGES + 1):
         route = prefix + '?page=' + str(page) + '&per_page=50'
         value = reader.request('GET', route); capture(route, value)
+        if page == 1 and type(value) is dict and set(value) == {'results'} and value['results'] == []:
+            return []
         gate.require(type(value) is dict and 'error' not in value
                      and type(value.get('results')) is list and len(value['results']) <= 50
                      and type(value.get('page')) is int and value['page'] == page)
