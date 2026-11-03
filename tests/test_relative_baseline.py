@@ -379,3 +379,12 @@ def test_baseline_workflow_uses_existing_scoped_source_credential():
     assert 'BASELINE_TREE_PAT: ${{ secrets.PILOT_PRIVATE_EVIDENCE_WRITER }}' in text
     assert 'secrets.FAMILY_TREE_PAT' not in text
     assert 'environment: father-create' in text
+
+
+
+def test_baseline_rejects_shared_external_union_across_subjects():
+    c = approved()
+    union = next(iter(c['external_edges'][SPOUSE]))
+    c['external_edges'][OWNER] = {union: 'partner'}
+    with pytest.raises(b.Blocked):
+        b.plan(c)

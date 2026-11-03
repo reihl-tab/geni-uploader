@@ -46,3 +46,6 @@ from insufficient permission. Exact source decode/hash/config checks still run
 before constructing the vendor client; mismatches print `source_package_mismatch`.
 No retry is added. The job cannot check its environment-scoped secrets before
 approval without a separate owner-approved custody design.
+
+External union IDs must be unique across pinned boundary subjects; shared
+external unions reject locally before vendor construction.

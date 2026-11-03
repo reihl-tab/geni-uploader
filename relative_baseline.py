@@ -36,11 +36,14 @@ def plan(value):
         core.existing_payload(body)
     boundary = value['external_edges']
     require(type(boundary) is dict and set(boundary) <= set(profiles))
+    boundary_unions = set()
     for target, edges in boundary.items():
         require(type(edges) is dict and 1 <= len(edges) <= 2)
         for union, role in edges.items():
             core.union_id(union)
-            require(union not in family and role in ('partner', 'child'))
+            require(union not in family and union not in boundary_unions
+                    and role in ('partner', 'child'))
+            boundary_unions.add(union)
     return copy.deepcopy(value)
 
 
