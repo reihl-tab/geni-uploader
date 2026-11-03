@@ -25,3 +25,24 @@ The standard GITHUB_RUN_ATTEMPT, GITHUB_EVENT_NAME, GITHUB_REPOSITORY, GITHUB_RE
 ## Stopped-read diagnostics
 
 A stopped read preserves failure_code as a fixed transport enum or validation_or_storage. Transport failures retain only bounded HTTP status, allowlisted structural enums, booleans and numeric counters in http_failure, encrypted with the rest of the evidence. No raw error text, exception strings, headers, URLs, credential values or arbitrary evidence fields are copied. A first-read failure can have an empty responses list while retaining these diagnostics. This does not prove token validity; an authentication error needs separate interpretation. No retry, credential refresh or follow-up read is added.
+
+
+## In-gate credential admission
+
+The baseline uses the existing protected `PILOT_PRIVATE_EVIDENCE_WRITER`
+credential for private source reads, avoiding the shared `FAMILY_TREE_PAT`
+override. The credential is already used by protected relative creation and has
+private source read capability; it is not a new read-only token. This runner's
+`GetOnly` client permits exactly the private repository and pinned source GETs,
+not credential writes, receipt writes, new routes or traversal. No secret value,
+permission, environment protection or approval gate is changed. A dedicated
+read-only credential would reduce privilege further but requires owner setup.
+
+After the deployment gate, missing credentials stop before any GitHub client;
+401 prints `source_authentication_failed`, 403 `source_access_or_policy_denied`,
+404 `source_inaccessible`. These fixed labels expose no private names or paths.
+They do not establish that a token expired or distinguish hidden private content
+from insufficient permission. Exact source decode/hash/config checks still run
+before constructing the vendor client; mismatches print `source_package_mismatch`.
+No retry is added. The job cannot check its environment-scoped secrets before
+approval without a separate owner-approved custody design.

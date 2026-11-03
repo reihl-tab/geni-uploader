@@ -128,6 +128,20 @@ def observe(approved, client, save, clock):
     return result
 
 
+
+def credential_failure(stage, exc):
+    """Fixed categories only. A masked 404 never proves expiry or permission scope."""
+    if stage == 'source_credential':
+        return 'source_credential_missing'
+    if stage == 'private_source' and type(exc) is TransportStop:
+        status = exc.evidence.get('http_status')
+        return {401: 'source_authentication_failed',
+                403: 'source_access_or_policy_denied',
+                404: 'source_inaccessible'}.get(status, 'source_transport_failed')
+    if stage in ('plan_hash', 'plan_config_consistency'):
+        return 'source_package_mismatch'
+    return 'baseline_admission_failed'
+
 def run(env):
     require(env.get('BASELINE_CONFIRM') == 'READ_ONLY_RELATIVE_BASELINE')
     for key, expected in (('GITHUB_RUN_ATTEMPT', '1'), ('GITHUB_EVENT_NAME', 'workflow_dispatch'),
@@ -161,12 +175,15 @@ def run(env):
             f.flush()
             os.fsync(f.fileno())
 
-    stage = 'private_source'
+    stage = 'source_credential'
     try:
+        token = env.get('BASELINE_TREE_PAT', '')
+        require(type(token) is str and bool(token.strip()))
+        stage = 'private_source'
         prefix = '/repos/' + c['data_repo']
         import urllib.parse
         source = prefix + '/contents/' + urllib.parse.quote(c['data_path'], safe='/') + '?ref=' + c['data_sha']
-        github = GetOnly('api.github.com', env.get('BASELINE_TREE_PAT', ''), [prefix, source])
+        github = GetOnly('api.github.com', token, [prefix, source])
         approved = PrivateGit(github, c['data_repo'], c['data_sha'], c['owner']).load(c['data_path'])
         stage = 'plan_hash'
         require(sha(canonical(approved)) == c['plan_sha256'])
@@ -179,8 +196,11 @@ def run(env):
         vendor = ReadOnlyVendor(env.get('GENI_SECONDARY_ACCESS_TOKEN', ''), approved)
         return observe(approved, vendor, save, time.time)['phase'] == 'READ_ONLY_BASELINE_VERIFIED'
     except Exception as exc:  # noqa: BLE001 - terminal boundary, no external text
+        code = credential_failure(stage, exc)
+        print('read-only baseline admission: ' + code)
         save({'phase': 'STOPPED', 'retry_allowed': False, 'create_enabled': False,
-              'stage': 'setup_or_storage', 'failure': setup_failure(stage, exc)})
+              'stage': 'setup_or_storage', 'admission_code': code,
+              'failure': setup_failure(stage, exc)})
         return False
 
 
