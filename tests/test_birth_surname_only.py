@@ -152,3 +152,14 @@ def test_main_birth_surname_must_match_english_locale():
     c['set']['maiden_name'] = 'ZZ Different'
     with pytest.raises(Blocked):
         core.plan(c)
+
+
+@pytest.mark.parametrize('mutation', ['missing', 'unexpected'])
+def test_birth_only_requested_locales_are_exact(mutation):
+    c = birth_plan()
+    if mutation == 'missing':
+        del c['set']['names']['he']
+    else:
+        c['set']['names']['fr'] = {'maiden_name': 'ZZ Family'}
+    with pytest.raises(Blocked):
+        core.plan(c)
