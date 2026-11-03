@@ -267,7 +267,3 @@ An upload `plan` without a token can return exit code 0 for a local preview,
 but its report remains incomplete and says `Safe to run: no`. Exit code 0
 alone does not prove readiness or authorize a write. This differs from the
 metadata `details-plan` above, which exits nonzero when no token is available.
-
-Relative sibling plans preserve one exact partner-union boundary edge per existing
-owner-household child without traversing that household. See
-[the bounded contract](docs/bounded-relative-siblings.md#exact-household-child-partner-boundaries).
