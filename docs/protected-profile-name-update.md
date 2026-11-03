@@ -85,3 +85,26 @@ API contract: https://www.geni.com/platform/developer/help/api?path=profile/upda
 `RELATIVE_TREE_PAT`. They remain isolated to this entry point and its
 `PROFILE_NAME_UPDATE_JSON` environment secret; sibling configurations are not
 reused. The vendor credential is `GENI_SECONDARY_ACCESS_TOKEN`.
+
+## Separate birth-surname-only shape (#711)
+
+A plan whose `set` contains exactly `maiden_name` and `names` selects a separate
+birth-surname-only operation. Main birth surname must equal the English locale
+birth surname. The existing English and Hebrew maps contain exactly one requested
+field each: `maiden_name`. No current surname is sent, inferred, cleared or filled.
+Unlike the old correction shape, the expected snapshot may omit current surname
+in main or either locale. Presence is significant: readback must preserve each
+omission or exact existing current-surname value. All existing first/middle names,
+locale maps, privacy, life status, explicit unclaimed status and family edges
+remain pinned. Both existing locales and their first names are still required.
+
+An already-present birth surname in main or either locale blocks this addition,
+even if equal to the requested value. Conflicts and idempotent reapplications are
+not silently overwritten. Unknown fields/locales, mixed correction/addition
+bodies and main/English mismatches block. The old correction shape and its
+old-surname preservation rules are unchanged. The same private exact package,
+three-read plan, protected approval, stable consumption, one POST and two-read
+verification apply. No live update is authorized by this code change. Vendor
+partial locale-map update behavior is checked after the write; an acknowledged
+update that drops existing names, adds current surname or changes family edges
+is STOPPED, not verified, and is never automatically retried or repaired.

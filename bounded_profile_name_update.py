@@ -31,18 +31,18 @@ def union_reference(value):
     return match.group(1)
 
 
-def expected(value):
+def expected(value, *, birth_surname_only=False):
     require(type(value) is dict and set(value) <= set(SNAPSHOT_KEYS))
     require(value.get('public') is False and value.get('is_alive') is True
             and value.get('claimed') is False)
     merge_state(value)
-    require(all(k in value for k in ('first_name', 'last_name', 'gender', 'unions'))
+    require(all(k in value for k in ('first_name', 'gender', 'unions', *(() if birth_surname_only else ('last_name',))))
             and value['gender'] in ('male', 'female', 'unknown'))
     names({k: v for k, v in value.items() if k in NAME_KEYS})
     require(type(value.get('names')) is dict and set(value['names']) == {'en-US', 'he'})
     for fields in value['names'].values():
         names(fields)
-        require('first_name' in fields and 'last_name' in fields)
+        require('first_name' in fields and (birth_surname_only or 'last_name' in fields))
     require(type(value.get('unions')) is list and len(value['unions']) <= 8)
     require(len(set(value['unions'])) == len(value['unions']))
     for union in value['unions']:
@@ -58,8 +58,23 @@ def plan(value):
     require(value['owner'] != value['target'])
     require(type(value['expect_name']) is str and 2 <= len(value['expect_name'].split()) <= 8)
     require(type(value['expires_at']) is int and 0 < value['expires_at'] < 2**40)
-    expected(value['expected'])
     change = value['set']
+    require(type(change) is dict)
+    birth_only = set(change) == {'maiden_name', 'names'}
+    expected(value['expected'], birth_surname_only=birth_only)
+    if birth_only:
+        exact(change, ('maiden_name', 'names'))
+        names({'maiden_name': change['maiden_name']})
+        require(type(change['names']) is dict and set(change['names']) == {'en-US', 'he'})
+        for locale, fields in change['names'].items():
+            exact(fields, ('maiden_name',))
+            names(fields)
+            require('maiden_name' not in value['expected']['names'][locale])
+        require('maiden_name' not in value['expected'])
+        require(change['maiden_name'] == change['names']['en-US']['maiden_name'])
+        result = copy.deepcopy(value)
+        result['expected'] = snapshot(dict(value['expected']))
+        return result
     exact(change, ('last_name', 'maiden_name', 'names'))
     names({k: change[k] for k in ('last_name', 'maiden_name')})
     require(type(change['names']) is dict and set(change['names']) == {'en-US', 'he'})
@@ -156,7 +171,8 @@ def execute(value, io, store, save, clock, *, read_only):
         after = read('profile', c['target'])
         want = copy.deepcopy(c['expected'])
         for key in ('last_name', 'maiden_name'):
-            want[key] = c['set'][key]
+            if key in c['set']:
+                want[key] = c['set'][key]
         for locale, fields in c['set']['names'].items():
             want['names'][locale].update(fields)
         require(after.get('id') == c['target'] and snapshot(after) == want)
