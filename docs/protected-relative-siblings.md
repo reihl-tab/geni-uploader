@@ -66,8 +66,10 @@ and create-only receipt/consume writes. No value belongs in public logs or docs.
 ## Exact spouse boundary pins
 
 An optional `external_edges` map may pin one omitted parent-union `child` edge
-for the anchor's existing spouse in the owner union. It never admits owner,
-anchor or other-relative boundaries, partner roles, known unions or traversal.
+for the anchor's existing spouse in the owner union, or one external `partner`
+edge for each existing child in that union (including the owner). It rejects
+anchor, parent or unrelated-subject boundaries, wrong roles, known unions and
+traversal; the two allowed classes are detailed below.
 Plans without the field retain their behavior. Full anchor graph equality checks
 preserve the pin before send and after every create. The protected transport
 also revalidates the cached pin before a successful direct union read can reopen
