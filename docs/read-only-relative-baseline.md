@@ -43,7 +43,9 @@ After the deployment gate, missing credentials stop before any GitHub client;
 404 `source_inaccessible`. These fixed labels expose no private names or paths.
 They do not establish that a token expired or distinguish hidden private content
 from insufficient permission. Exact source decode/hash/config checks still run
-before constructing the vendor client; mismatches print `source_package_mismatch`.
+before constructing the vendor client. Hash/config mismatches print
+`source_package_mismatch`; decode/schema failures print
+`baseline_admission_failed`.
 No retry is added. The job cannot check its environment-scoped secrets before
 approval without a separate owner-approved custody design.
 
