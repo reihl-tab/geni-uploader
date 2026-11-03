@@ -145,3 +145,10 @@ def test_real_entrypoint_birth_only(tmp_path, monkeypatch, mode):
     monkeypatch.setattr(protected, 'encrypt', lambda *_: b'age-encryption.org/v1\nZZ')
     assert protected.run(environment(c, tmp_path, mode)) is True
     assert len(io.posts) == (mode == 'update')
+
+
+def test_main_birth_surname_must_match_english_locale():
+    c = birth_plan()
+    c['set']['maiden_name'] = 'ZZ Different'
+    with pytest.raises(Blocked):
+        core.plan(c)
