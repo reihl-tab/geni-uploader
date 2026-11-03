@@ -90,3 +90,6 @@ no external union/profile traversal or route permission is added. Missing,
 changed, extra or materialized external edges stop before the next send.
 Reciprocal child graphs, exact direct-union membership, stable consume markers,
 privacy, expiry and no-retry rules are unchanged. Fixtures are synthetic ZZ data.
+
+The same external union cannot be pinned for two subjects; such a plan is
+rejected before reads, even when each individual role would otherwise fit.

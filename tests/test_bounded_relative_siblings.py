@@ -312,3 +312,14 @@ def test_child_partner_boundary_wrong_subject_role_or_count_rejected(node, edges
     with pytest.raises(b.Blocked):
         b.execute(c, io, Store(), lambda _: b'ZZ-cipher', lambda: 200)
     assert not io.reads and not io.posts
+
+
+@pytest.mark.parametrize('other', [OWNER, SPOUSE])
+def test_same_external_union_cannot_be_pinned_for_two_subjects(other):
+    c = household_boundary_plan()
+    c['external_edges'][HOUSEHOLD_CHILD] = {
+        next(iter(c['external_edges'][other])): 'partner'}
+    io = IO(c)
+    with pytest.raises(b.Blocked):
+        b.execute(c, io, Store(), lambda _: b'ZZ-cipher', lambda: 200)
+    assert not io.reads and not io.posts
