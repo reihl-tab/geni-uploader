@@ -43,7 +43,7 @@ jobs:
       - name: GET-only relative baseline
         env:
           BASELINE_CONFIG_JSON: ${{ secrets.RELATIVE_BASELINE_JSON }}
-          BASELINE_TREE_PAT: ${{ secrets.FAMILY_TREE_PAT }}
+          BASELINE_TREE_PAT: ${{ secrets.PILOT_PRIVATE_EVIDENCE_WRITER }}
           GENI_SECONDARY_ACCESS_TOKEN: ${{ secrets.GENI_SECONDARY_ACCESS_TOKEN }}
           BASELINE_EXECUTOR_SHA: ${{ inputs.executor_sha }}
           BASELINE_CONFIG_SHA256: ${{ inputs.config_sha256 }}

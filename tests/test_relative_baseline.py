@@ -334,3 +334,57 @@ def test_expiry_at_final_check_stops_before_verified():
         return 999 if len(v.trace) >= total_reads else 200
     assert b.observe(c, v, lambda _: None, clock)['phase'] == 'STOPPED'
     assert len(v.trace) == total_reads
+
+
+
+def test_missing_source_credential_stops_before_network(tmp_path, monkeypatch, capsys):
+    ok, trace = replay(tmp_path, monkeypatch, {'BASELINE_TREE_PAT': ''})
+    assert not ok and trace == []
+    assert 'source_credential_missing' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('status,code', [
+    (401, 'source_authentication_failed'),
+    (403, 'source_access_or_policy_denied'),
+    (404, 'source_inaccessible'),
+    (500, 'source_transport_failed'),
+])
+def test_private_source_http_failure_is_fixed_and_precedes_vendor(
+        tmp_path, monkeypatch, capsys, status, code):
+    from one_time_parent_pilot import TransportStop
+
+    class Denied:
+        def request(self, *args):
+            raise TransportStop('response_status', evidence={
+                'http_status': status, 'github_message': 'ZZ-private-content'})
+    monkeypatch.setattr(b, 'GetOnly', lambda *args, **kwargs: Denied())
+    monkeypatch.setattr(b, 'ReadOnlyVendor', lambda *args: pytest.fail('vendor constructed'))
+    # replay wraps this supplied client; only fixed encrypted structural failure survives.
+    ok, _ = replay(tmp_path, monkeypatch)
+    assert not ok
+    text = capsys.readouterr().out
+    assert code in text and 'ZZ-private-content' not in text
+    reports = list((tmp_path/'ZZ-evidence').glob('*.age'))
+    final = json.loads(reports[-1].read_bytes().split(b'\n', 1)[1])
+    assert final['admission_code'] == code and 'responses' not in final
+
+
+def test_source_hash_failure_has_distinct_fixed_category(tmp_path, monkeypatch, capsys):
+    ok, _ = replay(tmp_path, monkeypatch, source_change={'expect_name': 'ZZ Other'})
+    assert not ok and 'source_package_mismatch' in capsys.readouterr().out
+
+
+def test_baseline_workflow_uses_existing_scoped_source_credential():
+    text = (Path(__file__).resolve().parents[1]/'.github/workflows/relative-baseline.yml').read_text()
+    assert 'BASELINE_TREE_PAT: ${{ secrets.PILOT_PRIVATE_EVIDENCE_WRITER }}' in text
+    assert 'secrets.FAMILY_TREE_PAT' not in text
+    assert 'environment: father-create' in text
+
+
+
+def test_baseline_rejects_shared_external_union_across_subjects():
+    c = approved()
+    union = next(iter(c['external_edges'][SPOUSE]))
+    c['external_edges'][OWNER] = {union: 'partner'}
+    with pytest.raises(b.Blocked):
+        b.plan(c)
