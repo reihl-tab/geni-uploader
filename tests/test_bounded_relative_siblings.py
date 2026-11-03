@@ -241,3 +241,85 @@ def test_boundary_and_expiry_do_not_reset_sibling_markers():
     _, _, st, _ = run(c)
     r, io, _, _ = run(c, store=st)
     assert r['phase'] == 'STOPPED' and not io.posts
+
+
+HOUSEHOLD_CHILD = 'profile-991077'
+CHILD_PARTNER_UNION = 'union-991078'
+
+
+def household_boundary_plan():
+    c = plan()
+    c['profiles'][HOUSEHOLD_CHILD] = body('ZZ-Household-Child')
+    c['family'][FAMILY][HOUSEHOLD_CHILD] = 'child'
+    c['external_edges'] = {SPOUSE: {EXTERNAL: 'child'},
+                           OWNER: {'union-991079': 'partner'},
+                           HOUSEHOLD_CHILD: {CHILD_PARTNER_UNION: 'partner'}}
+    return c
+
+
+def test_exact_owner_and_sibling_partner_edges_are_pinned_not_traversed():
+    c = household_boundary_plan()
+    before = copy.deepcopy(c)
+    markers = [b.marker(c, e) for e in c['entries']]
+    r, io, st, _ = run(c)
+    assert r['phase'] == 'VERIFIED' and len(io.posts) == 2
+    assert c == before and len(st.consumed) == 2
+    assert not {EXTERNAL, CHILD_PARTNER_UNION, 'union-991079'} & {n for _, n in io.reads}
+    del c['external_edges']
+    assert [b.marker(c, e) for e in c['entries']] == markers
+
+
+@pytest.mark.parametrize('post', [False, True])
+@pytest.mark.parametrize('corruption', ['missing', 'wrong_role', 'extra', 'materialized'])
+def test_child_partner_boundary_mismatch_stops_before_next_post(post, corruption):
+    c = household_boundary_plan()
+    io, st = IO(c), Store()
+    original = io.get_family
+
+    def bad(node):
+        f = original(node)
+        if node != ANCHOR or bool(io.posts) != post:
+            return f
+        edges = f['nodes'][HOUSEHOLD_CHILD]['edges']
+        if corruption == 'missing':
+            del edges[CHILD_PARTNER_UNION]
+        elif corruption == 'wrong_role':
+            edges[CHILD_PARTNER_UNION] = {'rel': 'child'}
+        elif corruption == 'extra':
+            edges['union-991080'] = {'rel': 'partner'}
+        else:
+            f['nodes'][CHILD_PARTNER_UNION] = {}
+        return f
+    io.get_family = bad
+    r = b.execute(c, io, st, lambda _: b'ZZ-cipher', lambda: 200)
+    assert r['phase'] == 'STOPPED' and len(io.posts) == int(post)
+    assert len(st.consumed) == int(post)
+
+
+@pytest.mark.parametrize('node,edges', [
+    (HOUSEHOLD_CHILD, {CHILD_PARTNER_UNION: 'child'}),
+    (OWNER, {'union-991079': 'child'}),
+    (ANCHOR, {'union-991079': 'partner'}),
+    (OLD, {'union-991079': 'partner'}),
+    (HOUSEHOLD_CHILD, {CHILD_PARTNER_UNION: 'partner', 'union-991080': 'partner'}),
+    (HOUSEHOLD_CHILD, {FAMILY: 'partner'}),
+    ('profile-991081', {CHILD_PARTNER_UNION: 'partner'}),
+])
+def test_child_partner_boundary_wrong_subject_role_or_count_rejected(node, edges):
+    c = household_boundary_plan()
+    c['external_edges'] = {node: edges}
+    io = IO(c)
+    with pytest.raises(b.Blocked):
+        b.execute(c, io, Store(), lambda _: b'ZZ-cipher', lambda: 200)
+    assert not io.reads and not io.posts
+
+
+@pytest.mark.parametrize('other', [OWNER, SPOUSE])
+def test_same_external_union_cannot_be_pinned_for_two_subjects(other):
+    c = household_boundary_plan()
+    c['external_edges'][HOUSEHOLD_CHILD] = {
+        next(iter(c['external_edges'][other])): 'partner'}
+    io = IO(c)
+    with pytest.raises(b.Blocked):
+        b.execute(c, io, Store(), lambda _: b'ZZ-cipher', lambda: 200)
+    assert not io.reads and not io.posts

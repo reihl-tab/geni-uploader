@@ -66,8 +66,10 @@ and create-only receipt/consume writes. No value belongs in public logs or docs.
 ## Exact spouse boundary pins
 
 An optional `external_edges` map may pin one omitted parent-union `child` edge
-for the anchor's existing spouse in the owner union. It never admits owner,
-anchor or other-relative boundaries, partner roles, known unions or traversal.
+for the anchor's existing spouse in the owner union, or one external `partner`
+edge for each existing child in that union (including the owner). It rejects
+anchor, parent or unrelated-subject boundaries, wrong roles, known unions and
+traversal; the two allowed classes are detailed below.
 Plans without the field retain their behavior. Full anchor graph equality checks
 preserve the pin before send and after every create. The protected transport
 also revalidates the cached pin before a successful direct union read can reopen
@@ -75,3 +77,19 @@ the next-send latch. Missing, changed, extra or materialized boundary edges stop
 the batch. Existing route sets, request caps, pacing, approval gates and stable
 consumption markers are unchanged. Earlier verified creates remain created if a
 later item stops; no retry, rollback or automatic resume is introduced.
+
+
+### Exact household child partner boundaries
+
+An existing child in the pinned owner household (including the owner) may have
+one explicitly pinned external partner-union edge. The existing anchor spouse
+may retain one external child-role parent-union edge. Subjects outside those
+sets, wrong roles, multiple external edges per subject and unions already in
+the pinned graph are rejected before reads. These are boundary edges only:
+no external union/profile traversal or route permission is added. Missing,
+changed, extra or materialized external edges stop before the next send.
+Reciprocal child graphs, exact direct-union membership, stable consume markers,
+privacy, expiry and no-retry rules are unchanged. Fixtures are synthetic ZZ data.
+
+The same external union cannot be pinned for two subjects; such a plan is
+rejected before reads, even when each individual role would otherwise fit.
