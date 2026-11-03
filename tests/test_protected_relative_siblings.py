@@ -352,3 +352,18 @@ def test_corrupted_cached_boundary_never_reopens_latch(change):
     assert len(calls) == count and v.pending and len(model.posts) == 1
     with pytest.raises(p.Blocked):
         io.add_sibling(ANCHOR, p.core.parent.vendor_parent_payload(c['entries'][1]['payload']))
+
+
+
+def test_child_partner_boundaries_keep_protected_routes_closed():
+    from tests.test_bounded_relative_siblings import household_boundary_plan
+    from tests.test_guarded_family_additions import Store
+    c = household_boundary_plan()
+    v, model, calls = wired(c)
+    r = p.core.execute(c, p.IO(v), Store(), lambda _: b'ZZ-cipher', lambda: 200)
+    assert r['phase'] == 'VERIFIED' and len(model.posts) == 2
+    external = {u for edges in c['external_edges'].values() for u in edges}
+    assert all(not any(u in route for u in external) for _, route, _ in calls)
+    for u in external:
+        with pytest.raises(p.Blocked):
+            v.admit_vendor('GET', '/api/' + u + '?only_ids=true')

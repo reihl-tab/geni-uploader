@@ -47,3 +47,16 @@ the next-send latch. Missing, changed, extra or materialized boundary edges stop
 the batch. Existing route sets, request caps, pacing, approval gates and stable
 consumption markers are unchanged. Earlier verified creates remain created if a
 later item stops; no retry, rollback or automatic resume is introduced.
+
+
+### Exact household child partner boundaries
+
+An existing child in the pinned owner household (including the owner) may have
+one explicitly pinned external partner-union edge. The existing anchor spouse
+may retain one external child-role parent-union edge. Subjects outside those
+sets, wrong roles, multiple external edges per subject and unions already in
+the pinned graph are rejected before reads. These are boundary edges only:
+no external union/profile traversal or route permission is added. Missing,
+changed, extra or materialized external edges stop before the next send.
+Reciprocal child graphs, exact direct-union membership, stable consume markers,
+privacy, expiry and no-retry rules are unchanged. Fixtures are synthetic ZZ data.

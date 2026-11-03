@@ -46,12 +46,17 @@ def plan(value):
     boundary = value.get('external_edges', {})
     spouses = {p for u in owner_unions for p, role in family[u].items()
                if role == 'partner' and p != value['anchor']}
-    require(type(boundary) is dict and set(boundary) <= spouses)
-    for edges in boundary.values():
+    # Existing children in the owner's household may have a separate partner union.
+    # Pin only its edge, never expand or traverse that external household.
+    household_children = {p for u in owner_unions for p, role in family[u].items()
+                          if role == 'child'}
+    require(type(boundary) is dict and set(boundary) <= spouses | household_children)
+    for node, edges in boundary.items():
         require(type(edges) is dict and len(edges) == 1)
+        expected_role = 'child' if node in spouses else 'partner'
         for union, role in edges.items():
             parent.union_id(union)
-            require(union not in family and role == 'child')
+            require(union not in family and role == expected_role)
     entries = value['entries']
     require(type(entries) is list and 1 <= len(entries) <= 4
             and len(members) + len(entries) <= 10 and len(profiles) + len(entries) <= 12)
