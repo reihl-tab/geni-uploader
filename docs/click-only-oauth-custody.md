@@ -145,3 +145,52 @@ and rollback. Do not ask for tokens in chat or guess a settings change now.
 
 These support provider capabilities and constraints, not current installation,
 authority, entitlement, safe expiry implementation or production readiness.
+
+## Writer health and expiration (#762)
+
+Offline tests include rejected GitHub secret public-key requests (401/403).
+They prove the fixed writer-key stop, no secret PUT, no retry and no leaked
+credentials or response text. Offline mocks cannot detect a deployed token's
+calendar expiration.
+
+A proposed daily Worker cron check reads only GitHub's fixed repository secret
+public-key endpoint using its existing GITHUB_WRITER. It records HTTP status and
+the GitHub-Authentication-Token-Expiration response header, never the key body,
+credential, arbitrary headers or response text. Alert on non-200, unavailable or
+invalid expiration, or fewer than seven days remaining. A successful check stays
+quiet. It makes no Geni calls, OAuth exchanges or workflow dispatches.
+
+### Proposed operational wiring, not deployed
+
+The oauth-bootstrap Worker gets one daily cron trigger. A scheduled handler
+makes exactly one GET to the same fixed repository public-key endpoint as the
+connection writer, with manual redirect handling and a bounded timeout. It
+cancels the response body unread. Only status, fixed outcome enum, observed time,
+and parsed expiration time may enter health state. A malformed/missing expiry
+header is UNKNOWN, not healthy. A transport error is a fixed enum, never raw
+exception text. No credential values or hashes enter health state or logs.
+
+Failure reporting must not depend on the failing GITHUB_WRITER. A separate
+HEALTH_ALERT_WRITER, scoped only to Issues write in this repository, may update
+one fixed, pre-created public health issue. It cannot write secrets or trigger
+Actions. Its request method, host, repository, issue number and generic status
+body are fixed by reviewed code, not event payloads. The alert reveals only a
+service-health category and expiration timestamp, no account, connection slot,
+profile, family or credential details. It reports a changed failing category
+once, then suppresses identical repeats until recovery. Recovery updates the
+same issue once. No issue creation, dynamic recipient, retries or secret writes.
+An alert-channel failure must remain visible in bounded health state; it must
+not mark delivery successful. Its own expiry needs independent rotation tracking.
+
+Before activation: implement the scheduled handler, exact-schema health state
+and bounded alert adapter; add fake-clock tests for the seven-day boundary,
+missing/invalid expiry, expired401/403, timeout, redirects, unread body, fixed
+routing, repeat suppression, recovery and failed alert acknowledgment; get
+independent review and green exact-head CI. Separately provision the dedicated
+alert credential, fixed health issue and cron setting, preserving all existing
+Worker bindings and logging exclusions. This PR contains regressions and this
+design only. It does not deploy a cron trigger or claim daily monitoring exists.
+
+The deployed writer must be rotated before expiration with the same dedicated
+repository-only Secrets read/write scope. Rotation does not authorize a tree
+change. The next connection still requires human consent and metadata checks.
