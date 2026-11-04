@@ -968,3 +968,27 @@ import "./create-intent-candidate.test.mjs";
 
 // Offline workload JWT validation with synthetic keys only.
 import "./intent-workload-verifier.test.mjs";
+
+for (const status of [401, 403]) {
+  test(`writer public-key ${status} stops without writes, leakage or retry`, async () => {
+    const e = setup(), b = await begin(e);
+    let keys = 0, puts = 0;
+    const r = await handle(request('/callback?code=ZZCODE&state=' + b.state,
+      { headers: { Cookie: b.cookie } }), e, { fetcher: async (url, init) => {
+        if (url.endsWith('request_token')) return Response.json({
+          access_token: 'ZZACCESS', refresh_token: 'ZZREFRESH', expires_in: 300 });
+        if (url.endsWith('/public-key')) {
+          keys++;
+          return new Response('ZZ-private-response ' + e.GITHUB_WRITER, { status });
+        }
+        if (init.method === 'PUT') puts++;
+        throw Error('ZZ-unexpected-request');
+      } });
+    assert.equal(r.status, 400);
+    const text = await r.text();
+    assert.match(text, /Stage: writer-key/);
+    assert.doesNotMatch(text, /ZZCODE|ZZACCESS|ZZREFRESH|ZZWRITER|ZZ-private-response/);
+    assert.equal(keys, 1);
+    assert.equal(puts, 0);
+  });
+}
