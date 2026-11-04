@@ -322,8 +322,8 @@ def test_transport_boolean_fields_strict(key, value):
 
 def multi():
     return dict(cfg(), schema=2, max_gets=14,
-                profiles=['profile-101', 'profile-201', 'profile-202', 'profile-203', 'profile-204'],
-                unions=['union-301', 'union-302', 'union-303'])
+                profiles=[cfg()['owner'], cfg()['profiles'][1], 'profile-990001', 'profile-990002', 'profile-990003'],
+                unions=['union-980001', 'union-980002', 'union-980003'])
 
 
 def test_multi_anchor_four_anchors_fourteen_exact_gets():
@@ -345,10 +345,10 @@ def test_multi_anchor_four_anchors_fourteen_exact_gets():
 @pytest.mark.parametrize('change', [
     {'max_gets': 13}, {'max_gets': 51}, {'max_gets': True}, {'max_gets': 14.0},
     {'max_gets': '14'}, {'max_gets': 0}, {'schema': True}, {'schema': 3},
-    {'profiles': ['profile-101', 'profile-201', 'profile-201']},
-    {'unions': ['union-301', 'union-301']}, {'unions': []},
-    {'profiles': ['profile-201', 'profile-101']},
-    {'profiles': ['profile-101', 'https://evil.invalid/profile-201']},
+    {'profiles': [cfg()['owner'], cfg()['profiles'][1], cfg()['profiles'][1]]},
+    {'unions': ['union-980001', 'union-980001']}, {'unions': []},
+    {'profiles': [cfg()['profiles'][1], cfg()['owner']]},
+    {'profiles': [cfg()['owner'], 'https://evil.invalid/profile-990001']},
 ])
 def test_multi_invalid_before_vendor_construction(change, monkeypatch):
     c = multi(); c.update(change)
@@ -359,15 +359,15 @@ def test_multi_invalid_before_vendor_construction(change, monkeypatch):
 @pytest.mark.parametrize('profiles,unions', [(2, 45), (24, 1)])
 def test_exact_fifty_ceiling_and_no_fifty_first_call(profiles, unions):
     c = dict(cfg(), schema=2, max_gets=50,
-             profiles=['profile-101'] + ['profile-' + str(200 + i) for i in range(profiles - 1)],
-             unions=['union-' + str(300 + i) for i in range(unions)])
+             profiles=[cfg()['owner']] + ['profile-' + str(990100 + i) for i in range(profiles - 1)],
+             unions=['union-' + str(980100 + i) for i in range(unions)])
     assert len(h.routes(h.config(c))) == 50
     with patch.object(h.time, 'time', lambda: 200), patch.object(h.time, 'sleep'):
         v = h.Vendor('ZZ-token-123', c)
         for route, _, _ in h.routes(c): v.admit_vendor('GET', route)
         assert v.calls == 50
         with pytest.raises(Blocked): v.admit_vendor('GET', h.routes(c)[0][0])
-    c['unions'].append('union-999')
+    c['unions'].append('union-980004')
     with pytest.raises(Blocked): h.config(c)
 
 
@@ -387,5 +387,5 @@ def test_multi_vendor_pacing_exact_order_no_retry_or_mutation():
 def test_schema_one_does_not_accept_budget_or_extra_anchors():
     c = cfg(); c['max_gets'] = 50
     with pytest.raises(Blocked): h.config(c)
-    c = cfg(); c['profiles'].append('profile-202')
+    c = cfg(); c['profiles'].append('profile-990001')
     with pytest.raises(Blocked): h.config(c)
