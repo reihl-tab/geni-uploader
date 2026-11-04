@@ -10,20 +10,36 @@ from geni_uploader.client.probe import encrypt
 from geni_uploader.core.people import Blocked, exact, require
 from geni_uploader.runners.one_time_parent_pilot import HTTPS, TransportStop, canonical, decode, sha
 
+HARD_GET_CEILING = 50
+
 FIELDS = ('id,guid,url,profile_url,first_name,middle_name,last_name,maiden_name,names,'
           'gender,public,is_alive,claimed,merge_pending,merged_into,unions')
 
 
 def config(value):
-    exact(value, ('schema', 'owner', 'expect_name', 'recipient', 'expires_at', 'profiles', 'unions'))
-    base = {k: v for k, v in value.items() if k not in ('profiles', 'unions')}
+    require(type(value) is dict and type(value.get('schema')) is int
+            and value['schema'] in (1, 2))
+    multi = value['schema'] == 2
+    exact(value, ('schema', 'owner', 'expect_name', 'recipient', 'expires_at', 'profiles', 'unions')
+          + (('max_gets',) if multi else ()))
+    base = {k: v for k, v in value.items() if k not in ('profiles', 'unions', 'max_gets')}
+    base['schema'] = 1  # shared identity/expiry/encryption validation uses schema 1
     snapshot.config(dict(base, limits=copy.deepcopy(snapshot.LIMITS)))
     for key, kind in (('profiles', 'profile'), ('unions', 'union')):
-        require(type(value[key]) is list and len(value[key]) == (2 if key == 'profiles' else 1)
-                and len(set(value[key])) == len(value[key]))
-        for node in value[key]:
+        values = value[key]
+        require(type(values) is list)
+        require((2 <= len(values) <= 24 if key == 'profiles' else 1 <= len(values) <= 47)
+                if multi else len(values) == (2 if key == 'profiles' else 1))
+        for node in values:
             require(snapshot.node(node, kind) == node)
+        require(len(set(values)) == len(values))
     require(value['profiles'][0] == value['owner'])
+    if multi:
+        require(type(value['max_gets']) is int and 1 <= value['max_gets'] <= HARD_GET_CEILING)
+    planned = routes(value)
+    require(len(planned) <= (value['max_gets'] if multi else 6)
+            and len(planned) <= HARD_GET_CEILING
+            and len({route for route, _, _ in planned}) == len(planned))
     return copy.deepcopy(value)
 
 
@@ -39,12 +55,14 @@ def routes(c):
 
 class Vendor(HTTPS):
     def __init__(self, token, c):
-        super().__init__('www.geni.com', token, capture_failure=True)
         self.c = config(c)
+        super().__init__('www.geni.com', token, capture_failure=True)
         self.sequence = [route for route, _, _ in routes(self.c)]
 
     def admit_vendor(self, method, route):
-        require(method == 'GET' and self.calls < 6 and route == self.sequence[self.calls]
+        require(method == 'GET' and self.calls < len(self.sequence)
+                and self.calls < self.c.get('max_gets', 6)
+                and self.calls < HARD_GET_CEILING and route == self.sequence[self.calls]
                 and time.time() < self.c['expires_at'])
         self.calls += 1  # consume before wait or transport; no retry
         if self.last is not None:

@@ -173,8 +173,9 @@ def test_real_transport_rejects_post_before_connect(monkeypatch):
     assert v.calls == 0
 
 
-def test_success_evidence_encrypted_and_token_not_recorded(tmp_path, monkeypatch, capsys):
-    raw = h.canonical(cfg()); captures = []
+@pytest.mark.parametrize('schema', [1, 2])
+def test_success_evidence_encrypted_and_token_not_recorded(tmp_path, monkeypatch, capsys, schema):
+    raw = h.canonical(cfg() if schema == 1 else multi()); captures = []
     env = {'HOUSEHOLD_CONFIRM': 'READ_ONLY_HOUSEHOLD_BASELINE', 'GITHUB_RUN_ATTEMPT': '1',
            'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_REPOSITORY': 'reihlinstinct/geni-uploader',
            'GITHUB_REF': 'refs/heads/master', 'GITHUB_ACTOR': 'reihlinstinct',
@@ -186,6 +187,9 @@ def test_success_evidence_encrypted_and_token_not_recorded(tmp_path, monkeypatch
     monkeypatch.setattr(h, 'encrypt', lambda _, value: captures.append(value) or b'ZZ-ciphertext')
     monkeypatch.setattr(h, 'Vendor', lambda *_: Client())
     assert h.run(env)
+    assert len(captures) == (8 if schema == 1 else 16)
+    assert h.decode(captures[-1])['phase'] == 'HOUSEHOLD_BASELINE_COLLECTED'
+    assert h.decode(captures[-1])['config_sha256'] == h.sha(raw)
     assert all(b'ZZ-token-123' not in value for value in captures)
     assert all(x.read_bytes() == b'ZZ-ciphertext' for x in (tmp_path / 'evidence').glob('*.age'))
     assert capsys.readouterr().out == ''
@@ -314,3 +318,74 @@ def test_transport_status_range(value):
 @pytest.mark.parametrize('value', [0, 1, None, 'true', {}])
 def test_transport_boolean_fields_strict(key, value):
     assert h.safe_transport_evidence({key: value}) == {}
+
+
+def multi():
+    return dict(cfg(), schema=2, max_gets=14,
+                profiles=[cfg()['owner'], cfg()['profiles'][1], 'profile-990001', 'profile-990002', 'profile-990003'],
+                unions=['union-980001', 'union-980002', 'union-980003'])
+
+
+def test_multi_anchor_four_anchors_fourteen_exact_gets():
+    c = multi(); client = Client(); saved = []
+    assert h.config(c) == c
+    plan = h.routes(c)
+    assert len(plan) == len({r[0] for r in plan}) == 14
+    assert [kind for _, kind, _ in plan].count('owner') == 2
+    assert [kind for _, kind, _ in plan].count('family') == 5
+    assert [kind for _, kind, _ in plan].count('candidate') == 4
+    report = h.observe(c, client, saved.append, lambda: 200)
+    assert report['phase'] == 'HOUSEHOLD_BASELINE_COLLECTED'
+    assert client.calls == [route for route, _, _ in plan]
+    assert len(saved) == 15
+    assert report['profile_mutations'] is False
+    assert report['full_children_visibility'] == 'UNPROVED'
+
+
+@pytest.mark.parametrize('change', [
+    {'max_gets': 13}, {'max_gets': 51}, {'max_gets': True}, {'max_gets': 14.0},
+    {'max_gets': '14'}, {'max_gets': 0}, {'schema': True}, {'schema': 3},
+    {'profiles': [cfg()['owner'], cfg()['profiles'][1], cfg()['profiles'][1]]},
+    {'unions': ['union-980001', 'union-980001']}, {'unions': []},
+    {'profiles': [cfg()['profiles'][1], cfg()['owner']]},
+    {'profiles': [cfg()['owner'], 'https://evil.invalid/profile-990001']},
+])
+def test_multi_invalid_before_vendor_construction(change, monkeypatch):
+    c = multi(); c.update(change)
+    monkeypatch.setattr(h.HTTPS, '__init__', lambda *_args, **_kwargs: None)
+    with pytest.raises(Blocked): h.Vendor('ZZ-token-123', c)
+
+
+@pytest.mark.parametrize('profiles,unions', [(2, 45), (24, 1)])
+def test_exact_fifty_ceiling_and_no_fifty_first_call(profiles, unions):
+    c = dict(cfg(), schema=2, max_gets=50,
+             profiles=[cfg()['owner']] + ['profile-' + str(990100 + i) for i in range(profiles - 1)],
+             unions=['union-' + str(980100 + i) for i in range(unions)])
+    assert len(h.routes(h.config(c))) == 50
+    with patch.object(h.time, 'time', lambda: 200), patch.object(h.time, 'sleep'):
+        v = h.Vendor('ZZ-token-123', c)
+        for route, _, _ in h.routes(c): v.admit_vendor('GET', route)
+        assert v.calls == 50
+        with pytest.raises(Blocked): v.admit_vendor('GET', h.routes(c)[0][0])
+    c['unions'].append('union-980004')
+    with pytest.raises(Blocked): h.config(c)
+
+
+def test_multi_vendor_pacing_exact_order_no_retry_or_mutation():
+    c = multi(); waits = []
+    with patch.object(h.time, 'time', lambda: 200), patch.object(h.time, 'monotonic', lambda: 0), \
+            patch.object(h.time, 'sleep', waits.append):
+        v = h.Vendor('ZZ-token-123', c); plan = h.routes(c)
+        with pytest.raises(Blocked): v.admit_vendor('POST', plan[0][0])
+        with pytest.raises(Blocked): v.admit_vendor('GET', plan[1][0])
+        for route, _, _ in plan: v.admit_vendor('GET', route)
+        assert waits == [15] * 13
+        with pytest.raises(Blocked): v.admit_vendor('GET', plan[-1][0])
+        assert v.calls == 14
+
+
+def test_schema_one_does_not_accept_budget_or_extra_anchors():
+    c = cfg(); c['max_gets'] = 50
+    with pytest.raises(Blocked): h.config(c)
+    c = cfg(); c['profiles'].append('profile-990001')
+    with pytest.raises(Blocked): h.config(c)
