@@ -979,7 +979,10 @@ for (const status of [401, 403]) {
           access_token: 'ZZACCESS', refresh_token: 'ZZREFRESH', expires_in: 300 });
         if (url.endsWith('/public-key')) {
           keys++;
-          return new Response('ZZ-private-response ' + e.GITHUB_WRITER, { status });
+          return Response.json({
+            key: sodium.to_base64(sodium.crypto_box_keypair().publicKey, sodium.base64_variants.ORIGINAL),
+            key_id: 'ZZKEY',
+          }, { status });
         }
         if (init.method === 'PUT') puts++;
         throw Error('ZZ-unexpected-request');
