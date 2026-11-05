@@ -35,6 +35,14 @@ ENTRY_POINTS = {
 
 # Environment variable -> designated docs that must mention it.
 ENV_DOCS = {
+    'PAIR_CONFIG_JSON': ['docs/parent-pair-batch-protected-workflow.md'],
+    'PAIR_CONFIG_SHA256': ['docs/parent-pair-batch-protected-workflow.md'],
+    'PAIR_CONFIRM': ['docs/parent-pair-batch-protected-workflow.md'],
+    'PAIR_DEBUG': ['docs/parent-pair-batch-protected-workflow.md'],
+    'PAIR_EXECUTOR_SHA': ['docs/parent-pair-batch-protected-workflow.md'],
+    'PAIR_OUTPUT_DIR': ['docs/parent-pair-batch-protected-workflow.md'],
+    'PAIR_TREE_PAT': ['docs/parent-pair-batch-protected-workflow.md'],
+
     **{key: ['docs/source-slot-bridge.md'] for key in (
         'BRIDGE_EXECUTOR_SHA', 'BRIDGE_CONFIRM', 'BRIDGE_SOURCE_UPDATED_AT',
         'BRIDGE_SOURCE_VALUE', 'BRIDGE_WRITER', 'PATH')},
