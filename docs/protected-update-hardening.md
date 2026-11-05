@@ -16,3 +16,7 @@ consistency. The batch entry path has a positive encryption-boundary control,
 negative gates that cannot pass via invalid synthetic age data, fresh output-dir
 checks, phase-to-exit checks, and exclusive/fsynced encrypted evidence checks.
 These tests authorize no live run. Existing execution holds remain independent.
+
+The existing-only collision case is also pinned (#782): an old list containing
+casefold-equivalent values blocks a distinct new addition. The old list is not
+silently deduplicated, normalized or rewritten, and the rejected plan is unmodified.
