@@ -58,7 +58,7 @@ def test_probe_plan_and_config_reject_owner_as_target(tmp_path):
 
 
 @pytest.mark.parametrize('field,value', [('expires_at', 899), ('expect_name', 'ZZ Other Owner'),
-                                         ('target', 'profile-990009')])
+                                         ('target', 'profile-990003')])
 def test_probe_config_must_match_approved_plan(tmp_path, monkeypatch, field, value):
     c = plan(); env = environment(c, tmp_path)
     cfg = protected.decode(env['RELATIVE_CONFIG_JSON'].encode()); cfg[field] = value
