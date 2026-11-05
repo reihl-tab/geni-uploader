@@ -25,6 +25,11 @@ flowchart LR
 
 The container image carries the reviewed uploader code. The loader clones your repository into a tmpfs, reads the manifest and sources, uploads to Geni via its API, updates the status file with results, and commits+pushes the status back to your repo. Credentials are mounted at runtime; neither is baked into the image, printed, or committed.
 
+For independent onboarding and what is still unverified, see
+[setup status](docs/independent-setup-status.md). It distinguishes owner-local
+uploads from hosted custody and deployment-specific creation, and records the
+image provenance, credential-scope and app-registration gaps.
+
 ## CLI API
 
 The loader (`src/geni_uploader/client/upload.py`) provides these commands:
