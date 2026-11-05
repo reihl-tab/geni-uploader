@@ -104,3 +104,13 @@ def test_nfc_nonascii_alias_exact_not_normalized():
     c['append'] = ['ZZ é']
     assert core.plan(c)['append'] == ['ZZ é']
     assert run(c)[0]['phase'] == 'VERIFIED'
+
+
+def test_existing_only_casefold_collision_blocks_distinct_addition():
+    c = plan()
+    c['expected']['nicknames'] = ['ZZ Existing', 'zz existing']
+    c['append'] = ['ZZ Distinct']
+    original = copy.deepcopy(c)
+    with pytest.raises(Blocked):
+        core.plan(c)
+    assert c == original
