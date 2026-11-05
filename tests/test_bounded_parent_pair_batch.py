@@ -144,8 +144,8 @@ def test_uncertain_or_wrong_relationship_no_more_send(fault):
         if fault == 'ack_existing': return {'id': a}
         if fault == 'send_error': raise OSError('ZZ')
         u = io.created[a]
-        if fault == 'wrong_union': io.unions[u]['profile-990999'] = 'partner'
-        if fault == 'extra_child': io.graphs[a]['family'][u]['profile-990999'] = 'child'
+        if fault == 'wrong_union': io.unions[u]['profile-990004'] = 'partner'
+        if fault == 'extra_child': io.graphs[a]['family'][u]['profile-990004'] = 'child'
         return ack
     io.add_parent = add
     r, io, st, _ = run(io=io)
