@@ -7,7 +7,7 @@ Code merge is not live authority. No package is installed by this change.
 
 The exact actor, repository, master branch, first attempt, executor SHA, raw config
 SHA256, required debug mode and CREATE_APPROVED_PARENT_PAIR_BATCH confirmation
-are checked before effects. The isolated secret PARENT_PAIR_BATCH_JSON binds an
+are checked before effects. The isolated package secret (named in the workflow) binds an
 immutable private source commit and canonical decoded plan/audit hashes. The real
 PrivateGit/base64 source boundary checks all identities, operation payloads,
 risk policies, exact budget, source and prior-operation audit references before
