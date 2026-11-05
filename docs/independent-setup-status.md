@@ -104,7 +104,7 @@ and [bounded batch](bounded-parent-pair-sibling-batch-design.md) work is a separ
 narrow protected path. Successful deployment-specific creation does not release
 a generic `people-run` command in the upload container. The image's actual
 [Dockerfile](../Dockerfile), [entrypoint](../entrypoint.sh) and
-[shipped command definitions](../src/geni_uploader/client/cli_spec.py) identify
+`src/geni_uploader/client/cli_spec.py` shipped command definitions identify
 its command surface; public runner source alone is not a portable installation.
 
 The [batch workflow](../.github/workflows/parent-pair-batch-create.yml) requires

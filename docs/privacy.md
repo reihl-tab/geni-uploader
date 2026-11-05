@@ -7,7 +7,7 @@ to anyone's accounts or say that a person has agreed to token custody or a
 particular operating mode. Choose the mode and approve access separately.
 
 For what is implemented versus independently installable, see
-[independent setup status](independent-setup-status.md). Separate consent to
+[independent setup status](https://github.com/reihlinstinct/geni-uploader/blob/master/docs/independent-setup-status.md). Separate consent to
 assistance/custody is not a supported-service release or vendor-policy assurance.
 
 ## Operating modes and services
