@@ -31,6 +31,7 @@ def test_bad_entry_no_credentials_or_network(tmp_path, monkeypatch, field, bad):
     monkeypatch.setattr(r.time, 'time', lambda: 200)
     monkeypatch.setattr(r, 'HTTPS', lambda *_a, **_k:
                         (_ for _ in ()).throw(AssertionError('ZZ credential construction')))
+    monkeypatch.setattr(r, 'encrypt', lambda *_a: pytest.fail('ZZ encryption boundary'))
     with pytest.raises(f.p.core.Blocked): r.run(e)
 
 
