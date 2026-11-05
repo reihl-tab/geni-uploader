@@ -1,5 +1,6 @@
 """One private deceased profile, exact append-only aliases, injected effects."""
 import copy
+import unicodedata
 
 from geni_uploader.core.parent_contract import profile_id
 from geni_uploader.core.people import Blocked, exact, require
@@ -60,6 +61,14 @@ def plan(value):
     old = before.get('nicknames', [])
     require(not set(old).intersection(added))
     aliases(old + added)
+    # Reject ambiguity, never normalize approved text or infer vendor behavior.
+    for text in added:
+        require(unicodedata.is_normalized('NFC', text)
+                and '  ' not in text
+                and not any(unicodedata.category(c) in ('Cf', 'Zl', 'Zp', 'Cc')
+                            or (c.isspace() and c != ' ') for c in text))
+    folded = [text.casefold() for text in old + added]
+    require(len(set(folded)) == len(folded))
     result = copy.deepcopy(value)
     result['expected'] = before
     return result
