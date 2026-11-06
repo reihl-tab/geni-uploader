@@ -1,4 +1,5 @@
-"""Probe for #779 review: guards unpinned by tests/test_english_name_update.py. Synthetic, offline."""
+"""English-name updater guard regressions (#793): guards not pinned by
+tests/test_english_name_update.py. Synthetic, offline."""
 import copy
 
 import pytest
@@ -22,14 +23,14 @@ class OwnerIO(IO):
 @pytest.mark.parametrize('owner', [
     {'id': 'profile-990004', 'first_name': 'ZZ', 'last_name': 'Owner'},   # wrong account
     {'id': OWNER, 'first_name': 'ZZ', 'last_name': 'Other'}])             # wrong expect_name
-def test_probe_account_binding_before_any_write(owner):
+def test_account_binding_blocks_before_any_write(owner):
     c, store = plan(), Store()
     io = OwnerIO(c, owner)
     r = core.execute(c, io, store, lambda _: b'x', lambda: 200, read_only=False)
     assert r['phase'] == 'STOPPED' and not io.posts and not store.used
 
 
-def test_probe_expiry_between_consume_and_send():
+def test_expiry_between_consume_and_send_stops():
     c, flag = plan(), []
 
     class LateStore(Store):
@@ -43,7 +44,7 @@ def test_probe_expiry_between_consume_and_send():
     assert r['phase'] == 'STOPPED' and not io.posts
 
 
-def test_probe_expired_plan_reads_nothing():
+def test_expired_plan_reads_nothing():
     c = plan()
     io = IO(c)
     r = core.execute(c, io, Store(), lambda _: b'x', lambda: 10**6, read_only=True)
@@ -51,7 +52,7 @@ def test_probe_expired_plan_reads_nothing():
 
 
 @pytest.mark.parametrize('mutate', ['claimed', 'dup_union', 'self_target'])
-def test_probe_plan_shape(mutate):
+def test_plan_shape_is_enforced(mutate):
     c = plan()
     if mutate == 'claimed':
         c['expected']['claimed'] = True
@@ -63,7 +64,7 @@ def test_probe_plan_shape(mutate):
         core.plan(c)
 
 
-def test_probe_readback_must_be_target():
+def test_readback_must_be_target():
     c = plan()
 
     class WrongReadback(IO):
@@ -87,7 +88,7 @@ def _vendor(monkeypatch, read_only=False, now=200):
     return protected.ScopedVendor('ZZtoken123', c, read_only=read_only)
 
 
-def test_probe_vendor_route_order(monkeypatch):
+def test_vendor_route_order_is_enforced(monkeypatch):
     v = _vendor(monkeypatch)
     for method, route in v.sequence[:3]:
         v.admit_vendor(method, route)
@@ -98,14 +99,14 @@ def test_probe_vendor_route_order(monkeypatch):
         v.admit_vendor('GET', '/api/profile-990003?fields=names&only_ids=true')
 
 
-def test_probe_vendor_expiry_on_admission(monkeypatch):
+def test_vendor_expiry_on_admission(monkeypatch):
     v = _vendor(monkeypatch, now=10**6)
     with pytest.raises(Blocked):
         v.admit_vendor(*v.sequence[0])
     assert v.calls == 0
 
 
-def test_probe_vendor_expiry_after_pacing_sleep(monkeypatch):
+def test_vendor_expiry_after_pacing_sleep(monkeypatch):
     v = _vendor(monkeypatch)
     v.admit_vendor(*v.sequence[0])
     times = iter([200, 10**6])
@@ -115,7 +116,7 @@ def test_probe_vendor_expiry_after_pacing_sleep(monkeypatch):
     assert v.calls == 1
 
 
-def test_probe_io_body_pinned_before_transport(monkeypatch):
+def test_io_body_pinned_before_transport(monkeypatch):
     sent = []
     monkeypatch.setattr(protected.parent.IO, 'request', lambda self, *a: sent.append(a) or {})
     io = protected.IO(_vendor(monkeypatch), debug=True)
@@ -126,7 +127,7 @@ def test_probe_io_body_pinned_before_transport(monkeypatch):
 
 @pytest.mark.parametrize('mode,confirm', [('update', 'READ_ONLY_ENGLISH_NAME'),
                                           ('plan', 'UPDATE_APPROVED_ENGLISH_NAME')])
-def test_probe_confirm_is_mode_exact(tmp_path, monkeypatch, mode, confirm):
+def test_confirm_is_mode_exact(tmp_path, monkeypatch, mode, confirm):
     env = environment(plan(), tmp_path, mode)
     env['RELATIVE_CONFIRM'] = confirm
     monkeypatch.setattr(protected.time, 'time', lambda: 200)
@@ -146,7 +147,7 @@ def _env_with_config(tmp_path, c, **cfg_changes):
 
 @pytest.mark.parametrize('changes', [{'expires_at': 899}, {'expect_name': 'ZZ Someone Else'},
                                      {'owner': 'profile-990004'}])
-def test_probe_plan_config_consistency(tmp_path, monkeypatch, changes):
+def test_plan_config_consistency(tmp_path, monkeypatch, changes):
     c = plan()
 
     class Private:
@@ -163,13 +164,13 @@ def test_probe_plan_config_consistency(tmp_path, monkeypatch, changes):
     assert not protected.run(_env_with_config(tmp_path, c, **changes))
 
 
-def test_probe_config_rejects_self_target(tmp_path):
+def test_config_rejects_self_target(tmp_path):
     env = _env_with_config(tmp_path, plan(), target=OWNER)
     with pytest.raises(Blocked):
         protected.config(protected.decode(env['RELATIVE_CONFIG_JSON'].encode()))
 
 
-def test_probe_entry_expiry_and_fresh_output(tmp_path, monkeypatch):
+def test_entry_expiry_and_fresh_output(tmp_path, monkeypatch):
     monkeypatch.setattr(protected, 'encrypt', lambda *_: pytest.fail('must not encrypt'))
     monkeypatch.setattr(protected.time, 'time', lambda: 10**6)
     with pytest.raises(Blocked):
@@ -181,7 +182,7 @@ def test_probe_entry_expiry_and_fresh_output(tmp_path, monkeypatch):
         protected.run(environment(plan(), tmp_path))
 
 
-def test_probe_encrypt_preflight_before_output(tmp_path, monkeypatch):
+def test_encrypt_preflight_before_output(tmp_path, monkeypatch):
     def broken(*_):
         raise ValueError('ZZ bad recipient')
 
@@ -215,4 +216,5 @@ def test_confirmation_remains_exact(tmp_path, monkeypatch, mode, variant):
                                'newline': good + '\n'}[variant]
     monkeypatch.setattr(protected.time, 'time', lambda: 200)
     monkeypatch.setattr(protected, 'encrypt', lambda *_: pytest.fail('ZZ encryption boundary'))
-    with pytest.raises(Blocked): protected.run(env)
+    with pytest.raises(Blocked):
+        protected.run(env)
