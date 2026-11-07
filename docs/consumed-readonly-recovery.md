@@ -26,11 +26,53 @@ an expired approval. Persistent storage/recovery handoff remains open.
 
 ## Reservation failure after execution (#359)
 
-The ciphertext reservation is after `/execute` and before private upload. If the
-reservation request fails or its response is lost, the vendor create may already
-have happened and the intent remains consumed/uncertain. The job must not replay
-create, even if no postwrite ciphertext receipt exists. Known acknowledged ID
-stays in the object; read-only recovery reports it and current fixed observations.
-With lost acknowledgment, identity remains unresolved. Recovery observations do
-not reconstruct missing raw acknowledgment or prove a matching new parent is the
+`runProtectedFatherJob` (`oauth-bootstrap/protected-father-runner.mjs`) runs:
+journal `execute_attempt`, one `/execute`, then `/reserve`, then the postwrite
+age upload (`persistPostWriteHandoff`) and `/complete`. The reservation is after
+the executor and before any postwrite ciphertext exists. It fails when the
+service rejects it or its response is lost. Either way the runner stops with
+`execute_attempted: true` ("create may have been consumed, never replay") and
+the journaled job writes a `stopped` event with `execute_attempted: true`,
+`retry_allowed: false` ("inspect only, never replay create").
+
+State left behind:
+
+- Intent: consumed by `executeDurableFather` before the vendor POST, then moved
+  to `uncertain` on its success and caught-failure paths (if that transition
+  itself fails the intent stays `consumed`/`acknowledged`, and `/reserve` then
+  refuses because it requires `uncertain`). The create may have happened even
+  when the executor response reported `consumed_uncertain`.
+- Created ID: known only if the acknowledgment was saved. It is written to the
+  durable intent (`advance(..., 'acknowledge', ..., created)`) right after the
+  POST response; with a lost acknowledgment `created_id` stays `null`. The
+  runner held the ID only in memory: neither its private journal (`created_id`
+  appears only in `completed`) nor its thrown error carries it.
+- Ledger: only the `pre_write` evidence object and its bytes.
+- Reservation: none if rejected or its write fails (the transaction writes
+  nothing); `reserved`, with the pre-write total as `prior_total`, if the
+  response was lost after commit. There is no release/reset; a second
+  `/reserve` is refused.
+- No private postwrite ciphertext: no readback journal event, no upload of the
+  postwrite object and no `postwrite-receipt`.
+
+Recovery must inspect, never replay. A second execute is refused because the
+intent already exists (`consume` requires none), and a fresh journaled
+invocation is refused because the private journal directory/file already exists,
+before any service or storage request. The read-only path is
+`inspectPrivateRunJournal` plus `/recover` (`collectDurableFatherRecovery`,
+blocked by the shipped release gate and rehearsed only with the test-only gate
+replacement): it snapshots intent/ledger/receipt and makes fixed GETs only,
+reports the saved ID if any, and with a lost acknowledgment keeps identity
+unresolved even if a plausible new parent is observed. Recovery observations do
+not reconstruct a missing acknowledgment or prove a matching new parent is the
 one this run created. Original expiry still applies; no expired run is revived.
+Recovery evidence does not include the reservation record, so it cannot tell a
+rejected reservation from a committed one whose response was lost; nothing here
+resumes the postwrite upload.
+
+Rehearsed offline with synthetic values: real SQLite executor tests (saved and
+lost acknowledgment, each with a rejected and a lost-response reservation) and
+journaled runner tests with the synthetic age key (lost and rejected `/reserve`).
+Not verified: the authenticated service routes for this sequence (tests call
+the executor functions directly), Worker storage beyond local Miniflare
+SQLite, and any live service, vendor or GitHub behavior.

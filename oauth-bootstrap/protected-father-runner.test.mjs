@@ -25,3 +25,24 @@ test('remote journal failure stops journaled job before execute without retry',{
 
 test('synthetic transport rejects look-alike service URLs without entering service override',async t=>{let serviceCalls=0;mockGitAndService(t,{},undefined,()=>{serviceCalls++;return Response.json({ZZ:true});});for(const url of ['https://zz-service.invalid.attacker.invalid/execute','https://zz-service.invalid@attacker.invalid/execute','https://user@zz-service.invalid/execute','https://zz-service.invalid:444/execute','http://zz-service.invalid/execute','https://zz-service.invalid/unknown','https://zz-service.invalid/execute?ZZ=1','https://zz-service.invalid/execute#ZZ'])await assert.rejects(fetch(url,{redirect:'manual',headers:{}}));assert.equal(serviceCalls,0);});
 test('synthetic transport accepts exact supported service origin',async t=>{let calls=0;mockGitAndService(t,{},undefined,()=>{calls++;return Response.json({ZZ:true});});await fetch('https://zz-service.invalid/execute',{redirect:'manual'});assert.equal(calls,1);});
+// #359: reservation fails after the one consumed /execute response, before any postwrite ciphertext.
+for(const failure of['response_lost','rejected'])test('journaled runner reservation '+failure+' after consumed execute response stops without postwrite ciphertext and refuses replay',{skip:!key},async t=>{
+ const{mkdtemp,rm}=await import('node:fs/promises'),{join}=await import('node:path'),{tmpdir}=await import('node:os');
+ const{runJournaledFatherJob}=await import('./journaled-father-job.mjs'),{inspectPrivateRunJournal}=await import('./private-run-journal.mjs');
+ const root=await mkdtemp(join(tmpdir(),'ZZ-reservation-failure-runner-'));try{
+  const f=fixture();f.env.FATHER_PRIVATE_JOURNAL_DIRECTORY=join(root,'ZZ-private');let reserves=0;
+  const rejected=u=>{if(String(u).endsWith('/reserve')){reserves++;if(failure==='rejected')return Response.json({phase:'blocked_or_already_consumed',production_enabled:false,retry_allowed:false},{status:409});}};
+  const state=mockGitAndService(t,f,failure==='response_lost'?'reserve':undefined,undefined,rejected);
+  await assert.rejects(runJournaledFatherJob(f.env,f.approvalBytes,f.prewriteBytes),{message:'journaled father job stopped; inspect only, never replay create'});
+  let s=state();assert.equal(s.execute,1);assert.equal(s.complete,0);assert.equal(reserves,1);
+  assert.equal(s.trees.get(s.tree).some(e=>e.path==='ZZ-post.age'),false);
+  const journal=await inspectPrivateRunJournal(f.env),stages=journal.events.map(e=>e.stage);assert.equal(journal.retry_allowed,false);
+  assert.deepEqual(stages.slice(-2),['execute_attempt','stopped']);assert.equal(stages.includes('readback'),false);assert.equal(stages.includes('completed'),false);
+  assert.deepEqual(journal.events.at(-1).receipt,{execute_attempted:true,retry_allowed:false});
+  assert.equal(journal.events.some(e=>'created_id' in e.receipt),false);
+  // A fresh invocation is refused before any service or storage request.
+  const requests=s.requests;await assert.rejects(runJournaledFatherJob(f.env,f.approvalBytes,f.prewriteBytes));
+  s=state();assert.equal(s.requests,requests);assert.equal(s.execute,1);assert.equal(reserves,1);
+  assert.deepEqual((await inspectPrivateRunJournal(f.env)).events,journal.events);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
