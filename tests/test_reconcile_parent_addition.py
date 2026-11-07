@@ -362,3 +362,181 @@ def test_perfect_env_reaches_encryption_preflight(tmp_path, monkeypatch):
     monkeypatch.setattr(r, 'encrypt', preflight_sentinel)
     with pytest.raises(AssertionError, match='encryption preflight reached'):
         r.run(e)
+
+
+FOREIGN = f'profile-{991099}'
+FOREIGN_UNION, ANCHOR_UNION = [f'union-{n}' for n in (991099, 991001)]
+
+
+def _armed(monkeypatch, sentinel=False):
+    """Unexpired clock, credential boundary as a tripwire, encryption stubbed
+    (or armed as a sentinel) so only the guard under test can stop the run."""
+    monkeypatch.setattr(r.time, 'time', lambda: 200)
+    monkeypatch.setattr(r, 'HTTPS', lambda *a, **k: pytest.fail('credential boundary reached'))
+    if sentinel:
+        def preflight_sentinel(*a, **k):
+            raise AssertionError('encryption preflight reached')
+        monkeypatch.setattr(r, 'encrypt', preflight_sentinel)
+    else:
+        monkeypatch.setattr(r, 'encrypt', lambda *a: b'ZZ-cipher')
+
+
+def test_relative_output_dir_is_rejected_before_credentials(tmp_path, monkeypatch):
+    """#587: evidence goes only to an absolute, fresh directory."""
+    monkeypatch.chdir(tmp_path)
+    e = _perfect_env(tmp_path, plan())
+    e['RECONCILE_OUTPUT_DIR'] = 'ZZ-relative-out'
+    _armed(monkeypatch)
+    with pytest.raises(r.Blocked):
+        r.run(e)
+    assert not (tmp_path / 'ZZ-relative-out').exists()
+
+
+def test_existing_output_dir_is_rejected_before_credentials(tmp_path, monkeypatch):
+    """#587: an existing evidence directory is never reused or overwritten."""
+    e = _perfect_env(tmp_path, plan())
+    Path(e['RECONCILE_OUTPUT_DIR']).mkdir()
+    _armed(monkeypatch)
+    with pytest.raises(r.Blocked):
+        r.run(e)
+    assert list(Path(e['RECONCILE_OUTPUT_DIR']).iterdir()) == []
+
+
+def test_config_expiry_must_equal_approved_plan_expiry(tmp_path, monkeypatch):
+    """#587: run-level expiry is pinned to the approved plan, not only to the clock."""
+    ok, report, model, _ = replay(tmp_path, monkeypatch, config_change={'expires_at': 998})
+    assert not ok and not model.reads and not model.posts
+    assert report['failure']['setup_stage'] == 'plan_config_consistency'
+
+
+def test_expiry_before_a_later_read_stops_without_that_read():
+    """#587: the per-read expiry check stops reconciliation mid-sequence."""
+    c, io = fixture()
+    ticks = iter([200])
+    result = r.reconcile(c, io, NEW, PARENTS, lambda x: None, lambda: next(ticks, 999))
+    assert result['phase'] == 'STOPPED' and not io.posts
+    assert [x['target'] for x in result['responses']] == ['profile']
+
+
+def test_expiry_after_the_last_read_is_not_verified():
+    """#587: the closing expiry check holds even when every read was in time."""
+    c, io = fixture()
+    reads = r.reconcile(c, io, NEW, PARENTS, lambda x: None, lambda: 200)['responses']
+    c, io = fixture()
+    ticks = iter([200] * len(reads))
+    result = r.reconcile(c, io, NEW, PARENTS, lambda x: None, lambda: next(ticks, 999))
+    assert result['phase'] == 'STOPPED' and result['stage'] == 'read_union' and not io.posts
+    assert len(result['responses']) == len(reads)
+
+
+def test_owner_name_mismatch_stops_after_owner_read():
+    """#587: the owner identity check precedes every other read."""
+    c, io = fixture()
+    c['expect_name'] = 'ZZ-Nobody'
+    result = r.reconcile(c, io, NEW, PARENTS, lambda x: None, lambda: 200)
+    assert result['phase'] == 'STOPPED' and not io.posts
+    assert [x['target'] for x in result['responses']] == ['profile']
+
+
+def test_wrong_union_stops_before_reading_created_family():
+    """#587: the union-identity check stops before the created profile's family read."""
+    c, io = fixture()
+    result = r.reconcile(c, io, NEW, FOREIGN_UNION, lambda x: None, lambda: 200)
+    assert result['phase'] == 'STOPPED' and not io.posts
+    families = [x['target'] for x in result['responses'] if x['kind'] == 'family']
+    assert families == [ANCHOR]
+
+
+@pytest.mark.parametrize('created,union', [(ANCHOR, PARENTS), ('ZZ-invalid', PARENTS),
+                                           (NEW, None)])
+def test_config_rejects_created_anchor_malformed_or_missing_ids(created, union):
+    """#587: the created profile is distinct from the anchor, well formed, and
+    both pinned ids are required."""
+    c = dict(config(plan()), created_id=created, union_id=union)
+    if union is None:
+        c.pop('union_id')
+    with pytest.raises(r.Blocked):
+        r.config(c)
+
+
+def test_expired_admission_records_no_route_or_call(monkeypatch):
+    """#587: an expired vendor admission consumes neither the route nor budget."""
+    monkeypatch.setattr(r.time, 'time', lambda: 999)
+    v = r.ReadOnlyVendor(TOKEN, plan(), NEW, PARENTS)
+    with pytest.raises(r.Blocked):
+        v.admit_vendor('GET', '/api/' + PARENTS + '?only_ids=true')
+    assert v.calls == 0 and not v.seen
+
+
+def test_read_pacing_waits_the_full_fifteen_seconds(monkeypatch):
+    """#587: consecutive reads are paced by the full 15 s."""
+    sleeps = []
+    monkeypatch.setattr(r.time, 'time', lambda: 200)
+    monkeypatch.setattr(r.time, 'monotonic', lambda: 500)
+    monkeypatch.setattr(r.time, 'sleep', sleeps.append)
+    v = r.ReadOnlyVendor(TOKEN, plan(), NEW, PARENTS)
+    v.admit_vendor('GET', '/api/' + PARENTS + '?only_ids=true')
+    v.admit_vendor('GET', '/api/' + NEW + '/immediate-family?only_ids=true')
+    assert sleeps == [15] and v.calls == 2
+
+
+def _graph():
+    c, io = fixture()
+    actual = io.get_family(NEW)
+    expected = {PARENTS: io.spec[PARENTS]}
+    return actual, expected, r.core.boundary_edges(c, PARENTS, io.spec[PARENTS])
+
+
+def test_graph_baseline_is_accepted():
+    """Baseline for the isolated graph cases below: the unmodified graph passes."""
+    actual, expected, external = _graph()
+    r.core.graph_check(actual, NEW, expected, external_edges=external)
+
+
+@pytest.mark.parametrize('change', [
+    'focus_wrong_id', 'focus_error', 'focus_not_member', 'focus_url', 'focus_adopted',
+    'focus_foster', 'external_not_dict', 'external_malformed_union', 'external_role_parent',
+    'node_error', 'node_foster', 'node_url', 'node_id', 'union_status', 'union_url',
+    'union_id'])
+def test_each_graph_guard_is_the_only_rejection(change):
+    """#587: each drift breaks exactly one graph_check term; everything else stays
+    consistent, so deleting that term would let the graph through."""
+    import types
+    actual, expected, external = _graph()
+    focus = NEW
+    if change == 'focus_wrong_id':
+        actual['focus']['id'] = ANCHOR
+    elif change == 'focus_error':
+        actual['focus']['error'] = 'ZZ'
+    elif change == 'focus_not_member':
+        focus = actual['focus']['id'] = OWNER
+    elif change == 'focus_url':
+        actual['focus']['url'] = 'https://www.geni.com/api/' + FOREIGN
+    elif change == 'focus_adopted':
+        actual['focus']['adopted_children'] = []
+    elif change == 'focus_foster':
+        actual['focus']['foster_children'] = []
+    elif change == 'external_not_dict':
+        external = types.MappingProxyType(external)
+    elif change == 'external_malformed_union':
+        external[ANCHOR]['union-ZZ'] = 'partner'
+        actual['nodes'][ANCHOR]['edges']['union-ZZ'] = {'rel': 'partner'}
+    elif change == 'external_role_parent':
+        external[ANCHOR][ANCHOR_UNION] = 'parent'
+        actual['nodes'][ANCHOR]['edges'][ANCHOR_UNION] = {'rel': 'parent'}
+    elif change == 'node_error':
+        actual['nodes'][ANCHOR]['error'] = 'ZZ'
+    elif change == 'node_foster':
+        actual['nodes'][ANCHOR]['foster_children'] = []
+    elif change == 'node_url':
+        actual['nodes'][ANCHOR]['url'] = 'https://www.geni.com/api/' + FOREIGN
+    elif change == 'node_id':
+        actual['nodes'][ANCHOR]['id'] = FOREIGN
+    elif change == 'union_status':
+        actual['nodes'][PARENTS]['status'] = 'ex_spouse'
+    elif change == 'union_url':
+        actual['nodes'][PARENTS]['url'] = 'https://www.geni.com/api/' + FOREIGN_UNION
+    else:
+        actual['nodes'][PARENTS]['id'] = FOREIGN_UNION
+    with pytest.raises(r.Blocked):
+        r.core.graph_check(actual, focus, expected, external_edges=external)
