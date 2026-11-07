@@ -35,3 +35,61 @@ test('reservation rejects missing intent, wrong run, overflow and malformed deri
   const x=structuredClone({intent,ledger});change(x);const s=memory(x.intent,x.ledger);await assert.rejects(reservePostwriteBudget(s,b,d.run_id));assert.equal(s.data.has('postwrite-reservation'),false);
  }
 });
+// #359: the reservation sits after the consumed /execute response and before
+// any postwrite ciphertext upload. Rehearse that exact failure point offline.
+async function reservationFailureRehearsal(ackLost,reserveFailure){
+ const wrapper=`import{executeDurableFather,reservePostwriteBudget,collectDurableFatherRecovery}from'./durable-father-executor.mjs';
+export class ZZ{constructor(ctx){this.ctx=ctx;}
+ async fetch(r){const v=await r.json(),s=this.ctx.storage;try{
+  if(v.action==='inspect')return Response.json({intent:await s.get('intent')??null,ledger:await s.get('evidence-ledger')??null,reservation:await s.get('postwrite-reservation')??null,receipt:await s.get('postwrite-receipt')??null});
+  if(v.action==='reserve')return Response.json(await reservePostwriteBudget(s,v.binding,v.run_id));
+  if(v.action==='reserve-storage-fault')return Response.json(await reservePostwriteBudget({transaction:fn=>s.transaction(tx=>fn({get:k=>tx.get(k),put:k=>{throw Error('ZZ reservation write lost '+k);}}))},v.binding,v.run_id));
+  if(v.action==='recover')return Response.json(await collectDurableFatherRecovery(s,v.binding,v.token));
+  return Response.json(await executeDurableFather(s,v.binding,v.payload,v.token,v.prewrite));
+ }catch{return Response.json({phase:'blocked'},{status:409});}}}
+export default{fetch(r,e){return e.ZZ.get(e.ZZ.idFromName('ZZ-fixed-owner')).fetch(r)}};`;
+ const bundle=await build({stdin:{contents:wrapper,resolveDir:new URL('.',import.meta.url).pathname,sourcefile:'ZZ-test-only-359.mjs'},bundle:true,format:'esm',platform:'browser',external:['node:crypto'],write:false,plugins:[{name:'ZZ-test-only-release-replacement',setup(build){build.onLoad({filter:/father-release-gate\.mjs$/},()=>({contents:'export function requireFatherRelease(){}',loader:'js'}));}}]});
+ const id='profile-'+(999000+11),uid='union-'+(999000+12),api='https://www.geni.com/api/',profile={...p,id};
+ const family={focus:{id:b.owner},nodes:{[b.owner]:{id:b.owner},[id]:{...profile},[uid]:{id:uid,partners:[id],children:[b.owner]}}},union={id:uid,partners:[id],children:[b.owner]};
+ const seen=[],dir=await mkdtemp(join(tmpdir(),'ZZ-reservation-failure-'));let mf;
+ const outbound=r=>{seen.push(r.method+' '+r.url);assert.equal(r.headers.get('Authorization'),'Bearer ZZtoken123');
+  if(r.method==='POST'){assert.equal(r.url,api+b.owner+'/add-parent');if(ackLost)throw Error('ZZlost');return Response.json(profile);}
+  assert.equal(r.method,'GET');
+  if(r.url===api+'profile?only_ids=true')return Response.json({id:b.owner});
+  if(r.url===api+b.owner+'/immediate-family?only_ids=true')return Response.json(family);
+  if(r.url===api+id+'?only_ids=true')return Response.json(profile);
+  if(r.url===api+uid+'?only_ids=true')return Response.json(union);
+  throw Error('ZZ unexpected '+r.url);};
+ const start=()=>new Miniflare({...convertV4MiniflareOptions({name:'ZZ-reservation-failure',modules:true,script:bundle.outputFiles[0].text,compatibilityDate:'2026-10-01',compatibilityFlags:['nodejs_compat'],durableObjects:{ZZ:{className:'ZZ',useSQLite:true}},outboundService:outbound}),resourcePersistencePath:dir,isolatedResourcePersistencePath:dir});
+ const send=body=>mf.dispatchFetch('https://ZZ.invalid/',{method:'POST',body:JSON.stringify(body)}),inspect=async()=>(await send({action:'inspect'})).json();
+ const posts=()=>seen.filter(x=>x.startsWith('POST ')).length,execute={binding:b,payload:p,token:'ZZtoken123',prewrite:d};
+ try{
+  mf=start();
+  // The one executor response is returned and consumed by the caller.
+  const executed=await send(execute);assert.equal(executed.status,200);const result=await executed.json();
+  assert.equal(result.retry_allowed,false);assert.equal(result.post_write_evidence_durable,false);assert.equal(posts(),1);
+  assert.equal(result.phase,ackLost?'consumed_uncertain':'consumed_readback_consistent_evidence_pending');assert.equal(result.created_id,ackLost?null:id);
+  // Then the reservation step fails.
+  if(reserveFailure==='rejected')assert.equal((await send({action:'reserve-storage-fault',binding:b,run_id:d.run_id})).status,409);
+  else{const lost=await send({action:'reserve',binding:b,run_id:d.run_id});assert.equal(lost.status,200);await lost.body.cancel();}
+  const state=await inspect();
+  assert.equal(state.intent.phase,'uncertain');assert.equal(state.intent.created_id,ackLost?null:id);assert.equal(state.intent.production_enabled,false);
+  assert.equal(state.receipt,null);assert.equal(state.ledger.total_bytes,d.byte_length);assert.deepEqual(state.ledger.objects.map(x=>x.stage),['pre_write']);
+  if(reserveFailure==='rejected')assert.equal(state.reservation,null);
+  else{assert.equal(state.reservation.phase,'reserved');assert.equal(state.reservation.prior_total,d.byte_length);}
+  // Neither execute nor reservation is offered again, including after restart.
+  await mf.dispose();mf=start();
+  assert.equal((await send(execute)).status,409);
+  if(reserveFailure==='response_lost')assert.equal((await send({action:'reserve',binding:b,run_id:d.run_id})).status,409);
+  assert.deepEqual(await inspect(),state);assert.equal(posts(),1);
+  // Recovery inspects the existing state and fixed read-only observations only.
+  const before=seen.length,recovered=await send({action:'recover',binding:b,token:'ZZtoken123'});assert.equal(recovered.status,200);const r=await recovered.json();
+  assert.ok(seen.slice(before).every(x=>x.startsWith('GET ')));assert.equal(seen.length-before,ackLost?2:4);assert.equal(posts(),1);
+  assert.equal(r.phase,'consumed_read_only_observations_collected');assert.equal(r.created_id,ackLost?null:id);assert.equal(r.identity_resolved,!ackLost);
+  assert.equal(r.retry_allowed,false);assert.equal(r.intent_verified,false);assert.equal(r.private_evidence.receipt,null);
+  assert.deepEqual(r.private_evidence.intent,state.intent);assert.deepEqual(r.private_evidence.ledger,state.ledger);
+  if(ackLost)assert.equal(r.private_evidence.profile,null);else assert.equal(r.private_evidence.profile.id,id);
+  assert.deepEqual(await inspect(),state);assert.equal((await send(execute)).status,409);assert.equal(posts(),1);
+ }finally{if(mf)await mf.dispose();await rm(dir,{recursive:true,force:true});}
+}
+for(const ackLost of[false,true])for(const reserveFailure of['rejected','response_lost'])test('real SQLite reservation '+reserveFailure+' after consumed execute response (acknowledgment '+(ackLost?'lost':'saved')+') keeps no receipt, recovers read-only, never replays create',{timeout:45000},()=>reservationFailureRehearsal(ackLost,reserveFailure));
