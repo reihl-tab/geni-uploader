@@ -46,3 +46,33 @@ for(const failure of['response_lost','rejected'])test('journaled runner reservat
   assert.deepEqual((await inspectPrivateRunJournal(f.env)).events,journal.events);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+// #808 finding 3: characterization tests that pin a CURRENT gap on purpose. At this
+// failure point the created ID reaches the runner only in the consumed /execute response;
+// neither the thrown error nor any journal carries it. Service-side counterpart:
+// oauth-bootstrap/consumed-readonly-recovery.test.mjs. A future fix must flip these deliberately.
+const reservationFailure808=(failure,onReserve)=>u=>{if(String(u).endsWith('/reserve')){onReserve();if(failure==='rejected')return Response.json({phase:'blocked_or_already_consumed',production_enabled:false,retry_allowed:false},{status:409});}};
+for(const failure of['response_lost','rejected'])test('pins current gap (#808 finding 3): runner reservation '+failure+' drops the created ID from its thrown error and progress receipts',{skip:!key},async t=>{
+ const f=fixture(),id=f.result.created_id,events=[];let reserves=0;
+ const state=mockGitAndService(t,f,failure==='response_lost'?'reserve':undefined,undefined,reservationFailure808(failure,()=>reserves++));
+ let error;await assert.rejects(runProtectedFatherJob(f.env,f.approvalBytes,f.prewriteBytes,x=>events.push(x)),e=>{error=e;return true;});
+ assert.equal(state().execute,1);assert.equal(reserves,1);assert.equal(typeof id,'string');
+ assert.deepEqual(Object.keys(error),['execute_attempted']);assert.equal(error.execute_attempted,true);assert.equal('created_id' in error,false);assert.equal(error.cause,undefined);
+ assert.equal(String(error.message).includes(id),false);assert.equal(String(error.stack).includes(id),false);
+ assert.equal(events.map(e=>e.stage).at(-1),'execute_attempt');assert.equal(JSON.stringify(events).includes(id),false);
+});
+for(const failure of['response_lost','rejected'])test('pins current gap (#808 finding 3): journaled runner reservation '+failure+' keeps the created ID out of its journals and error',{skip:!key},async t=>{
+ const{mkdtemp,rm,readdir,readFile}=await import('node:fs/promises'),{join}=await import('node:path'),{tmpdir}=await import('node:os');
+ const{runJournaledFatherJob}=await import('./journaled-father-job.mjs'),{inspectPrivateRunJournal}=await import('./private-run-journal.mjs');
+ const root=await mkdtemp(join(tmpdir(),'ZZ-reservation-808-'));try{
+  const f=fixture(),id=f.result.created_id,remote=[];f.env.FATHER_PRIVATE_JOURNAL_DIRECTORY=join(root,'ZZ-private');let reserves=0;
+  const onReserve=reservationFailure808(failure,()=>reserves++),external=(u,o)=>{if(String(u).endsWith('/journal'))remote.push(String(o.body));return onReserve(u);};
+  const state=mockGitAndService(t,f,failure==='response_lost'?'reserve':undefined,undefined,external);
+  let error;await assert.rejects(runJournaledFatherJob(f.env,f.approvalBytes,f.prewriteBytes),e=>{error=e;return true;});
+  assert.equal(state().execute,1);assert.equal(reserves,1);assert.equal(typeof id,'string');
+  assert.equal(error.message,'journaled father job stopped; inspect only, never replay create');assert.deepEqual(Object.keys(error),[]);assert.equal(error.cause,undefined);assert.equal(String(error.stack).includes(id),false);
+  const journal=await inspectPrivateRunJournal(f.env);assert.equal(journal.events.at(-1).stage,'stopped');assert.equal(JSON.stringify(journal).includes(id),false);
+  const files=[];const walk=async d=>{for(const e of await readdir(d,{withFileTypes:true})){const x=join(d,e.name);if(e.isDirectory())await walk(x);else files.push(await readFile(x,'utf8'));}};await walk(root);
+  assert.ok(files.length>0);assert.equal(files.some(x=>x.includes(id)),false);
+  assert.ok(remote.length>0);assert.equal(remote.some(x=>x.includes(id)),false);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
