@@ -76,3 +76,43 @@ journaled runner tests with the synthetic age key (lost and rejected `/reserve`)
 Not verified: the authenticated service routes for this sequence (tests call
 the executor functions directly), Worker storage beyond local Miniflare
 SQLite, and any live service, vendor or GitHub behavior.
+
+## One-shot reservation after a lost response: deliberate (#808)
+
+Decision: a run whose `/reserve` committed but whose response was lost cannot
+admit its postwrite receipt through the reviewed runner. This is intentional
+for the release-gated one-shot pilot, not an oversight.
+
+Why it holds today (`oauth-bootstrap/durable-father-executor.mjs`):
+`reservePostwriteBudget` refuses when any `postwrite-reservation` exists, and
+nothing releases or resets a committed one. The runner
+(`oauth-bootstrap/protected-father-runner.mjs`) stops on the lost response,
+and the journaled job (`oauth-bootstrap/journaled-father-job.mjs`) refuses a
+fresh invocation because its private journal already exists. So the postwrite
+upload and `/complete` (`admitPostwriteReceipt`) never run for that run. The
+only path left is read-only inspection, as described above.
+
+Two related gaps are pinned by characterization tests, named
+"pins current gap (#808 finding N)". A change that removes a gap must flip its
+test on purpose:
+
+- Finding 1: the `/recover` snapshot carries intent, ledger and receipt but not
+  the reservation, so its evidence is identical whether a reservation committed
+  or none exists (`oauth-bootstrap/consumed-readonly-recovery.test.mjs`).
+- Finding 3: at this failure point the created ID is in the service-side durable
+  intent only. The runner's thrown error, its progress receipts and its private
+  and remote journals do not carry it
+  (`oauth-bootstrap/protected-father-runner.test.mjs`).
+
+What a future recovery path would need (suggestions, not designed or reviewed):
+
+- An authenticated, read-only reservation status read (phase, `prior_total`,
+  `byte_limit`, run and recipient), or the reservation added to the `/recover`
+  snapshot, so recovery can tell a committed reservation from a rejected one.
+- An idempotent re-admit keyed on the committed reservation (same binding, run
+  and recipient, and the ledger total still equal to `prior_total`) instead of a
+  second `/reserve`. It must never replay create.
+- Evidence for it: the reservation record, the saved created ID from the
+  durable intent, and the runner journal showing `execute_attempt` then
+  `stopped`. Any such path also needs its own explicit recovery authority; the
+  original approval and its expiry are not reused.
