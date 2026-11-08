@@ -73,6 +73,34 @@ literally in the test, and every field is validated (invented-token name
 shapes, Hebrew variants, profile/union id ranges, field-specific reserved
 phone forms, checksum-failing national ids, uniqueness of keys and ids).
 
+## Persona-rendered documents (#733)
+
+Documents listed in `synthetic/persona-template-manifest.json` are rendered
+from `docs/templates/*.md.in` templates with values from
+`synthetic/personas.json` (design: `docs/persona-template-design.md`; first
+example: `docs/persona-template-example.md`). Edit the template, never the
+generated output.
+
+```sh
+python tools/render_persona_docs.py [--root DIR] [--write]
+```
+
+Template tokens are `{persona.KEY.FIELD}` (KEY a persona key, FIELD one of
+its string fields); `{{` and `}}` write literal braces. Tokens render the
+same in prose and in code fences. Unknown keys or fields, malformed tokens
+and lone braces fail; a manifest entry's `forbidden_fields` rejects those
+fields (as tokens or as literal values) in its output.
+
+The default run only checks: it renders every listed document in memory
+(UTF-8, LF, one final newline, a generated-from notice) and compares the
+exact committed bytes. Exit 0 when all match, 1 on drift (a stale persona
+value, a template change not re-rendered, or a directly edited output), 2
+on a manifest, persona-data, template or path error (unknown keys, duplicate
+JSON keys, traversal, symlinks, duplicate or overlapping paths). `--write`
+updates drifted outputs locally and is refused when `GITHUB_ACTIONS=true` or
+`CI=true`. The renderer does not prove prose free of real names; review is
+still required.
+
 ## Known blind spots
 
 Bare numeric IDs in prose are not reliably distinguishable from fixture

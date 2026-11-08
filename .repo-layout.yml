@@ -48,7 +48,8 @@
         "*.json",
         "*.yml",
         "*.yaml",
-        "*.example"
+        "*.example",
+        "*.md.in"
       ]
     },
     "geni_offline": {
